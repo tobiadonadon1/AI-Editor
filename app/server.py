@@ -15,22 +15,36 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile, Request
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from PIL import Image, ImageDraw, ImageFont
 
 ROOT = Path(__file__).resolve().parent.parent
-DATA = ROOT / "data"
+SERVERLESS_UI_ONLY = bool(os.getenv("VERCEL"))
+DATA = Path(os.getenv("AI_EDITOR_DATA_DIR", str(ROOT / "data"))).expanduser().resolve()
 PROJECTS = DATA / "projects"
 WEB = ROOT / "web"
-PROJECTS.mkdir(parents=True, exist_ok=True)
+if not SERVERLESS_UI_ONLY:
+    PROJECTS.mkdir(parents=True, exist_ok=True)
 app = FastAPI(title="Advanced AI Editor", docs_url="/api/docs")
 LOCK = threading.RLock()
 SUPPORTED_VIDEO = {".mp4", ".mov", ".m4v", ".webm", ".mkv"}
 SUPPORTED_AUDIO = {".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac"}
 MAX_UPLOAD = 1024 * 1024 * 1024
+
+
+@app.middleware("http")
+async def reject_serverless_processing(request: Request, call_next):
+    """Do not promise edits from Vercel's disposable, read-only function runtime."""
+    if SERVERLESS_UI_ONLY and request.url.path != "/api/health" and (
+        request.url.path.startswith("/api/") or request.url.path.startswith("/media/") or request.url.path.startswith("/beds/")
+    ):
+        return JSONResponse(status_code=503, content={
+            "detail": "Video processing is not connected. This site needs a persistent backend with FFmpeg and durable storage."
+        })
+    return await call_next(request)
 
 
 def now() -> str:
@@ -555,7 +569,11 @@ class ProjectEdit(BaseModel):
 
 @app.get("/api/health")
 def health():
-    return {"ok": True, "ffmpeg": bool(shutil.which("ffmpeg")), "transcriptionInstalled": _transcription_installed()}
+    ffmpeg = bool(shutil.which("ffmpeg"))
+    return {"ok": not SERVERLESS_UI_ONLY and ffmpeg, "ffmpeg": ffmpeg,
+            "transcriptionInstalled": _transcription_installed(),
+            "storage": "unavailable" if SERVERLESS_UI_ONLY else str(DATA),
+            "reason": "A persistent video-processing backend is required for this deployment." if SERVERLESS_UI_ONLY else None}
 
 
 def _transcription_installed() -> bool:
@@ -726,4 +744,5 @@ def bed(name: str):
     return FileResponse(generate_bed(name), media_type="audio/wav")
 
 
-app.mount("/", StaticFiles(directory=WEB, html=True), name="web")
+if WEB.is_dir():
+    app.mount("/", StaticFiles(directory=WEB, html=True), name="web")

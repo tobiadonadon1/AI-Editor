@@ -9,14 +9,19 @@ const editableKeys = ['name', 'brief', 'settings', 'clips', 'broll', 'overlays',
 const fmt = (seconds) => { const s = Math.max(0, Math.floor(seconds || 0)); return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`; };
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const uid = () => Math.random().toString(16).slice(2, 14);
+let backendReady = false;
+const localBrowserOverride = new URLSearchParams(location.search).get('mode') === 'browser';
+const browserMode = localBrowserOverride || !['localhost', '127.0.0.1', '[::1]'].includes(location.hostname);
+const pageUrl = id => `/${id ? `?project=${id}${localBrowserOverride ? '&mode=browser' : ''}` : localBrowserOverride ? '?mode=browser' : ''}`;
 const duration = () => state.project?.clips.reduce((sum, c) => sum + (c.sourceEnd - c.sourceStart), 0) || 0;
 const asset = (id) => state.project?.assets.find(a => a.id === id);
-const sourceUrl = (a) => `/media/${state.project.id}/${encodeURIComponent(a.storedName)}`;
-const thumbnailUrl = (a) => a.thumbnail ? `/media/${state.project.id}/${encodeURIComponent(a.thumbnail)}` : '';
+const sourceUrl = (a) => browserMode ? BrowserEngine.mediaUrl(a.id) : `/media/${state.project.id}/${encodeURIComponent(a.storedName)}`;
+const thumbnailUrl = (a) => browserMode ? BrowserEngine.thumbnailUrl(a) : a.thumbnail ? `/media/${state.project.id}/${encodeURIComponent(a.thumbnail)}` : '';
 
 async function api(url, options = {}) {
+  if (browserMode) return BrowserEngine.request(url, options);
   let response;
-  try { response = await fetch(url, options); } catch { throw new Error('Cannot connect to the local editor. Check that the server is running.'); }
+  try { response = await fetch(url, options); } catch { throw new Error('Cannot reach the video-processing service.'); }
   const contentType = response.headers.get('content-type') || '';
   const data = contentType.includes('json') ? await response.json() : null;
   if (!response.ok) throw new Error(typeof data?.detail === 'string' ? data.detail : `Request failed (${response.status})`);
@@ -58,7 +63,7 @@ function timeOfClip(id) { let start = 0; for (const c of state.project?.clips ||
 function currentMusicUrl() {
   const m = state.project?.music || {};
   if (m.assetId) { const a = asset(m.assetId); return a ? sourceUrl(a) : ''; }
-  return m.bed ? `/beds/${m.bed}` : '';
+  return m.bed ? browserMode ? BrowserEngine.bedUrl(m.bed) : `/beds/${m.bed}` : '';
 }
 function syncMusic() {
   const url = currentMusicUrl();
@@ -174,6 +179,7 @@ function renderEditor() {
   $('#mobileProjectTitle').textContent = p.name;
   $('#miniPreview .mini-stage').className = `mini-stage ${p.settings.format}`;
   $('#exportButton').disabled = !p.clips.length || ['analyzing', 'rendering'].includes(p.job.status);
+  $('#exportButton').textContent = browserMode ? `Export ${BrowserExporter.extension().toUpperCase()} ↗` : 'Export video ↗';
   if (document.activeElement !== $('#briefEditor')) $('#briefEditor').value = p.brief || '';
   $('#stageFormat').textContent = {vertical:'Vertical · 9:16',wide:'Landscape · 16:9',square:'Square · 1:1'}[p.settings.format];
   $('#videoStage').className = `video-stage ${p.settings.format}`;
@@ -210,8 +216,8 @@ function renderTimeline() {
     return `<div class="clip-block${state.selected?.id === c.id ? ' selected' : ''}" role="button" tabindex="0" draggable="true" data-select="clip" data-id="${c.id}" data-index="${index}" style="left:${x}px;width:${width}px" title="${esc(a?.name || 'Clip')} · source ${c.sourceStart.toFixed(1)}–${c.sourceEnd.toFixed(1)}s">${a?.thumbnail ? `<img src="${thumbnailUrl(a)}" width="45" height="32" alt="">` : ''}<span>${c.sourceStart.toFixed(1)}–${c.sourceEnd.toFixed(1)}s</span></div>`;
   }).join('');
   $('#cutawayTrack').innerHTML = (p.broll || []).map(b => { const a=asset(b.assetId);return `<div class="cutaway-block${state.selected?.id===b.id?' selected':''}" role="button" tabindex="0" data-select="cutaway" data-id="${b.id}" style="left:${b.start*px}px;width:${Math.max(6,(b.sourceEnd-b.sourceStart)*px)}px" title="Cutaway: ${esc(a?.name||'Video')}">${a?.thumbnail?`<img src="${thumbnailUrl(a)}" width="45" height="32" alt="">`:''}<span>${esc(a?.name||'Cutaway')}</span></div>`; }).join('');
-  $('#captionTrack').innerHTML = p.captions.enabled ? state.captions.map(c => `<div class="caption-block${state.selected?.id === c.id ? ' selected' : ''}" role="button" tabindex="0" data-select="caption" data-id="${esc(c.id)}" style="left:${Math.max(0,c.start) * px}px;width:${Math.max(6,(c.end - c.start) * px)}px" title="${esc(c.text)}"><span>${esc(c.text)}</span></div>`).join('') : '';
-  $('#graphicTrack').innerHTML = p.overlays.map(o => `<div class="graphic-block${state.selected?.id === o.id ? ' selected' : ''}" role="button" tabindex="0" data-select="overlay" data-id="${o.id}" style="left:${o.start * px}px;width:${Math.max(6,(o.end-o.start) * px)}px" title="${esc(o.text)}"><span>${esc(o.text)}</span></div>`).join('');
+  $('#captionTrack').innerHTML = [...(p.captions.enabled ? state.captions : []), ...p.overlays.filter(o=>o.type==='caption')].map(c => `<div class="caption-block${state.selected?.id === c.id ? ' selected' : ''}" role="button" tabindex="0" data-select="${c.type==='caption'&&p.overlays.some(o=>o.id===c.id)?'overlay':'caption'}" data-id="${esc(c.id)}" style="left:${Math.max(0,c.start) * px}px;width:${Math.max(6,(c.end - c.start) * px)}px" title="${esc(c.text)}"><span>${esc(c.text)}</span></div>`).join('');
+  $('#graphicTrack').innerHTML = p.overlays.filter(o=>o.type!=='caption').map(o => `<div class="graphic-block${state.selected?.id === o.id ? ' selected' : ''}" role="button" tabindex="0" data-select="overlay" data-id="${o.id}" style="left:${o.start * px}px;width:${Math.max(6,(o.end-o.start) * px)}px" title="${esc(o.text)}"><span>${esc(o.text)}</span></div>`).join('');
   const m = p.music, label = m.assetId ? asset(m.assetId)?.name : m.bed === 'warm-air' ? 'Warm Air' : m.bed === 'soft-pulse' ? 'Soft Pulse' : '';
   $('#musicTrack').innerHTML = label ? `<div class="music-block${state.selected?.type === 'music' ? ' selected' : ''}" role="button" tabindex="0" data-select="music" data-id="music" style="left:0;width:${Math.max(4,len * px)}px"><span>♫ ${esc(label)} · ${Math.round(m.volume * 100)}%</span></div>` : '';
   updatePlayhead();
@@ -250,7 +256,7 @@ function renderInspector() {
   }
   if (sel.type === 'overlay') {
     const o = p.overlays.find(x=>x.id===sel.id); if (!o) { state.selected=null; return renderInspector(); }
-    el.innerHTML = `<div class="inspector-type">Title graphic</div><div class="inspector-name">On-screen title</div><div class="inspector-field"><label for="ins-overlayText">Text</label><textarea id="ins-overlayText" rows="3">${esc(o.text)}</textarea></div><div class="inspector-grid"><div class="inspector-field"><label for="ins-start">Start</label><input id="ins-start" data-field="start" type="number" min="0" max="${duration()}" step="0.1" value="${o.start.toFixed(1)}"></div><div class="inspector-field"><label for="ins-end">End</label><input id="ins-end" data-field="end" type="number" min="0" max="${duration()}" step="0.1" value="${o.end.toFixed(1)}"></div></div>${fieldRange('Horizontal','x',o.position?.x??.5,.05,.95,.01,`${Math.round((o.position?.x??.5)*100)}%`)}${fieldRange('Vertical','y',o.position?.y??.25,.05,.95,.01,`${Math.round((o.position?.y??.25)*100)}%`)}<p class="inspector-hint">You can also drag the title on the preview.</p>`;
+    el.innerHTML = `<div class="inspector-type">${o.type==='caption'?'Caption':'Title graphic'}</div><div class="inspector-name">${o.type==='caption'?'On-screen words':'On-screen title'}</div><div class="inspector-field"><label for="ins-overlayText">Text</label><textarea id="ins-overlayText" rows="3">${esc(o.text)}</textarea></div><div class="inspector-grid"><div class="inspector-field"><label for="ins-start">Start</label><input id="ins-start" data-field="start" type="number" min="0" max="${duration()}" step="0.1" value="${o.start.toFixed(1)}"></div><div class="inspector-field"><label for="ins-end">End</label><input id="ins-end" data-field="end" type="number" min="0" max="${duration()}" step="0.1" value="${o.end.toFixed(1)}"></div></div>${fieldRange('Horizontal','x',o.position?.x??.5,.05,.95,.01,`${Math.round((o.position?.x??.5)*100)}%`)}${fieldRange('Vertical','y',o.position?.y??.25,.05,.95,.01,`${Math.round((o.position?.y??.25)*100)}%`)}<p class="inspector-hint">You can also drag the text on the preview.</p>`;
     return;
   }
   if (sel.type === 'music') {
@@ -266,7 +272,7 @@ async function loadProject(id) {
   clearInterval(state.pollTimer); state.playing = false; player.pause(); musicPlayer.pause(); cutawayPlayer.pause(); state.activeAsset = null; state.activeCutaway = null; state.overlayKey = '';
   try {
     state.project = await api(`/api/projects/${id}`); state.project.broll ||= []; state.selected = null; state.time = 0; state.history = []; state.future = [];
-    history.replaceState({}, '', `/?project=${id}`);
+    history.replaceState({}, '', pageUrl(id));
     await loadCaptions(); renderEditor(); seek(0, false);
     if (['analyzing','rendering'].includes(state.project.job.status)) pollJob();
   } catch (err) { toast(err.message, true); }
@@ -294,12 +300,13 @@ function pollJob() {
 }
 async function createProject(event) {
   event.preventDefault();
+  if (!backendReady) { $('#backendNotice').hidden = false; return; }
   const files = $('#welcomeFiles').files;
   if (!files.length || ![...files].some(f=>f.type.startsWith('video/') || /\.(mp4|mov|m4v|webm|mkv)$/i.test(f.name))) { toast('Add at least one video clip.', true); return; }
   const button = $('#createForm button[type=submit]'); button.disabled = true; button.textContent = 'Preparing footage…';
   try {
     const idea = $('#storyIdea').value.trim();
-    const p = await api('/api/projects', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:idea.slice(0,52) || 'Untitled story',brief:idea,format:$('#videoFormat').value,pace:$('#videoPace').value})});
+    const p = await api('/api/projects', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:idea.split(/[.\n]/)[0].trim().slice(0,52) || 'Untitled story',brief:idea,format:$('#videoFormat').value,pace:$('#videoPace').value})});
     const form = new FormData(); for (const file of files) form.append('files',file);
     await api(`/api/projects/${p.id}/assets`,{method:'POST',body:form});
     await api(`/api/projects/${p.id}/analyze`,{method:'POST'});
@@ -357,6 +364,13 @@ function addTitle() {
   if(start===null){toast('No free space for another title. Move or shorten an existing title first.',true);return;}
   remember(); const o={id:uid(),type:'title',text:'Your title',start,end:Math.min(total,start+length),position:{x:.5,y:.25}};
   state.project.overlays.push(o); state.selected={type:'overlay',id:o.id}; changed(); seek(start,false);
+  setTimeout(()=>$('#ins-overlayText')?.focus(),0);
+}
+function addCaption() {
+  if(!state.project?.clips.length){toast('Add footage before placing a caption.',true);return;}
+  remember();const start=Math.min(state.time,Math.max(0,duration()-.6));
+  const o={id:uid(),type:'caption',text:'Your caption',start,end:Math.min(duration(),start+2.4),position:{x:.5,y:.78}};
+  state.project.overlays.push(o);state.selected={type:'overlay',id:o.id};changed();seek(start,false);
   setTimeout(()=>$('#ins-overlayText')?.focus(),0);
 }
 function select(type,id) {
@@ -450,20 +464,46 @@ async function videoStills(file) {
 }
 function updateFiles() {
   const files=[...$('#welcomeFiles').files], art=$('#welcomeDrop .drop-art'), frames=[...art.querySelectorAll('.film-frame')], run=++filePreviewRun;
-  $('#welcomeDrop strong').textContent=files.length?`${files.length} file${files.length===1?'':'s'} ready`:'Add your clips';
-  $('#welcomeDrop > span').textContent=files.length?'Click to change selection':'Drop videos here or choose files';
+  $('#welcomeDrop strong').textContent=files.length?`${files.length} file${files.length===1?'':'s'} ready`:'Add your footage';
+  $('#dropHint').textContent=files.length?'Click to change selection':'Drop video or browse files';
+  $('#dropKind').textContent=files.length?'YOUR FOOTAGE':'EXAMPLE FRAME';
   $('#welcomeFileNames').textContent=files.length?files.map(f=>f.name).join(' · '):'';
   $('#welcomeDrop').classList.toggle('has-files',!!files.length);
-  art.classList.remove('has-thumbnails');frames.forEach(frame=>frame.style.backgroundImage='');
+  art.classList.remove('has-thumbnails');art.style.backgroundImage='';frames.forEach(frame=>frame.style.backgroundImage='');
   const videoFile=files.find(f=>f.type.startsWith('video/')||/\.(mp4|mov|m4v|webm|mkv)$/i.test(f.name));
-  if (videoFile) videoStills(videoFile).then(stills=>{if(run!==filePreviewRun)return;frames.forEach((frame,i)=>frame.style.backgroundImage=`url("${stills[i]}")`);art.classList.add('has-thumbnails');}).catch(()=>{});
+  if (videoFile) videoStills(videoFile).then(stills=>{if(run!==filePreviewRun)return;frames.forEach((frame,i)=>frame.style.backgroundImage=`url("${stills[i]}")`);art.style.backgroundImage=`url("${stills[0]}")`;art.classList.add('has-thumbnails');}).catch(()=>{});
 }
-async function goHome() { state.playing=false;player.pause();musicPlayer.pause();cutawayPlayer.pause();state.project=null;state.captions=[];clearInterval(state.pollTimer);history.replaceState({},'','/');try{renderWelcome(await api('/api/projects'));}catch(err){renderWelcome([]);toast(err.message,true);} }
+async function checkBackend() {
+  let message = '';
+  try {
+    const health = await api('/api/health', {signal: AbortSignal.timeout(10000)});
+    backendReady = !!health.ok;
+    if(browserMode) await BrowserEngine.request('/api/projects');
+    if (!backendReady) message = health.reason || (health.ffmpeg === false ? 'FFmpeg is missing from the processing server.' : 'The video-processing server is unavailable.');
+  } catch (err) { backendReady = false; message = err.message; }
+  $('#backendMessage').textContent = message;
+  $('#backendNotice').hidden = backendReady;
+  $('#browserNote').hidden = !browserMode || !backendReady;
+  $('#createForm button[type=submit]').disabled = !backendReady;
+  return backendReady;
+}
+async function goHome() {
+  state.playing=false;player.pause();musicPlayer.pause();cutawayPlayer.pause();miniPlayer.pause();state.project=null;state.captions=[];clearInterval(state.pollTimer);history.replaceState({},'',pageUrl());
+  renderWelcome([]);
+  if (!await checkBackend()) return;
+  try { renderWelcome(await api('/api/projects')); }
+  catch (err) { backendReady=false;$('#backendMessage').textContent=err.message;$('#backendNotice').hidden=false;$('#createForm button[type=submit]').disabled=true; }
+}
 function renameProject() { if(!state.project)return;const v=prompt('Project name',state.project.name);if(v?.trim()){remember();state.project.name=v.trim().slice(0,100);changed();} }
 async function init() {
+  document.body.classList.toggle('browser-workspace',browserMode);
   configureDragDrop();
   $('#createForm').addEventListener('submit',createProject);
   $('#brandButton').addEventListener('click',goHome);
+  $('#railHome').addEventListener('click',goHome);
+  $('#railCreate').addEventListener('click',goHome);
+  $('#railProjects').addEventListener('click',async()=>{await goHome();if(!$('#recentProjects').hidden)$('#recentProjects').scrollIntoView({behavior:'smooth',block:'start'});});
+  $('#retryBackend').addEventListener('click',goHome);
   $('#returnPreviewButton').addEventListener('click',()=>{if(document.body.classList.contains('mobile-adjusting')){state.selected=null;renderTimeline();renderInspector();updatePreviewOverlays();}else $('#videoStage').scrollIntoView({behavior:'smooth',block:'center'});});
   $('#newProjectButton').addEventListener('click',goHome);
   $('#projectTitle').addEventListener('click',renameProject);
@@ -478,6 +518,7 @@ async function init() {
   $('#skipForward').addEventListener('click',()=>seek(state.time+5,false));
   $('#captionsToggle').addEventListener('click',()=>{if(!state.project)return;remember();state.project.captions.enabled=!state.project.captions.enabled;changed();});
   $('#addTitleButton').addEventListener('click',addTitle);
+  $('#addCaptionButton').addEventListener('click',addCaption);
   $('#splitButton').addEventListener('click',splitAtPlayhead);
   $('#deleteButton').addEventListener('click',deleteSelected);
   $('#undoButton').addEventListener('click',undo);
@@ -493,7 +534,23 @@ async function init() {
   $('#inspector').addEventListener('input',editInspector);
   $('#inspector').addEventListener('change',e=>{if(e.target.dataset.field==='sourceStart'||e.target.dataset.field==='sourceEnd'){saveNow().then(loadCaptions);seek(state.time,false);}});
   $('#inspector').addEventListener('click',e=>{const move=e.target.closest('[data-move]');if(move)moveClip(move.dataset.move==='left'?-1:1);if(e.target.id==='hideCaptionButton')deleteSelected();});
-  $('#exportButton').addEventListener('click',async()=>{if(!state.project)return;if(state.project.job.status==='exported'){window.location.href=`/api/projects/${state.project.id}/export`;return;}try{await saveNow();await api(`/api/projects/${state.project.id}/render`,{method:'POST'});state.project.job={status:'rendering',phase:'Preparing export',progress:1};renderEditor();pollJob();}catch(err){toast(err.message,true);}});
+  $('#exportButton').addEventListener('click',async()=>{
+    if(!state.project)return;
+    if(browserMode){
+      const button=$('#exportButton');button.disabled=true;button.textContent='Exporting…';
+      try{
+        await saveNow();
+        const {blob,extension}=await BrowserExporter.exportVideo({state,player,cutawayPlayer,musicPlayer,seek,duration,activeOverlays});
+        if(blob.size<1000)throw new Error('The export was empty.');
+        const url=URL.createObjectURL(blob),link=document.createElement('a');link.href=url;link.download=`advanced-ai-editor-${state.project.id}.${extension}`;document.body.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),60000);
+        $('#projectStatus').textContent='Export complete';toast(`${extension.toUpperCase()} downloaded.`);
+      }catch(err){toast(err.message,true);$('#projectStatus').textContent='Export failed';}
+      finally{button.disabled=false;button.textContent=`Export ${BrowserExporter.extension().toUpperCase()} ↗`;}
+      return;
+    }
+    if(state.project.job.status==='exported'){window.location.href=`/api/projects/${state.project.id}/export`;return;}
+    try{await saveNow();await api(`/api/projects/${state.project.id}/render`,{method:'POST'});state.project.job={status:'rendering',phase:'Preparing export',progress:1};renderEditor();pollJob();}catch(err){toast(err.message,true);}
+  });
   document.addEventListener('keydown',e=>{if(!state.project)return;if(e.key==='Escape'&&document.body.classList.contains('mobile-adjusting')){state.selected=null;renderTimeline();renderInspector();updatePreviewOverlays();return;}if(['INPUT','TEXTAREA','SELECT'].includes(document.activeElement.tagName))return;if(e.code==='Space'){e.preventDefault();togglePlay();}if(e.key.toLowerCase()==='s'&&!e.metaKey&&!e.ctrlKey){e.preventDefault();splitAtPlayhead();}if(e.key==='Delete'||e.key==='Backspace')deleteSelected();if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='z'){e.preventDefault();e.shiftKey?redo():undo();}});
   player.addEventListener('ended',()=>{if(state.playing)seek(Math.min(duration(),state.time+.05),true);});
   requestAnimationFrame(tick);

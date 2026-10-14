@@ -1,6 +1,14 @@
-# Advanced AI Editor — local video editor
+# Advanced AI Editor
 
-Advanced AI Editor is a local web app for making an editable first cut from raw footage. Its design uses a light workspace, a focused upload flow and compact editing controls. It is the foundation for a hosted product; the paywall comes later.
+An editable first-cut workspace for raw footage. The interface uses a warm stone and black palette, with media at the center.
+
+## Hosted on Vercel
+
+`vercel.json` deploys `web/` as a static site. The hosted editor processes clips in the browser and saves projects and source files in that browser's IndexedDB. It does not send large video files through a Vercel function. A user can upload clips, remove measured quiet sections, review and change cuts, add titles or captions, adjust image and sound, place cutaways, choose a generated music bed or upload audio, and download an MP4 where supported (WebM fallback). The export plays through in real time; keep the tab open until it downloads. Browser storage is device-specific and can be cleared by the browser.
+
+Hosted mode does not currently transcribe speech or make semantic edit decisions. Captions are manual. The first cut uses audio energy; if the browser cannot decode a file for analysis, it keeps the full clip. This is a usable browser editor, not the complete AI product described in the roadmap.
+
+To test hosted mode locally, serve `web/` as static files and open `/?mode=browser` on localhost. Normal `http://localhost:8000/` uses the Python server below.
 
 ## Run it
 
