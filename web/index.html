@@ -3,64 +3,62 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="dark">
-  <meta name="description" content="Spool turns raw footage into an editable first cut.">
-  <title>Spool — The editing room</title>
+  <meta name="color-scheme" content="light">
+  <meta name="description" content="Advanced AI Editor turns your footage into an editable first cut.">
+  <meta property="og:title" content="Advanced AI Editor">
+  <meta property="og:description" content="Raw clips. First cut. Cuts, captions and music. All editable.">
+  <meta property="og:image" content="/og.png">
+  <title>Advanced AI Editor</title>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
-  <noscript>Spool needs JavaScript to edit and preview video.</noscript>
+  <noscript>Advanced AI Editor needs JavaScript to edit and preview video.</noscript>
   <div id="app">
     <header class="topbar">
-      <button class="brand" id="brandButton" type="button" aria-label="Spool home"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span><span>SPOOL<span class="brand-dot">.</span></span></button>
+      <button class="brand" id="brandButton" type="button" aria-label="Advanced AI Editor home"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span><span>Advanced AI Editor</span></button>
       <div class="header-divider"></div>
-      <div class="project-heading"><span class="header-kicker">EDITING ROOM</span><button id="projectTitle" class="project-title" type="button">New story</button></div>
-      <div class="top-actions"><span class="save-state" id="saveState">Local project</span><button class="button subtle" id="newProjectButton" type="button">New story</button><button class="button primary" id="exportButton" type="button" disabled>Export video <span aria-hidden="true">↗</span></button></div>
+      <div class="project-heading"><button id="projectTitle" class="project-title" type="button">New edit</button></div>
+      <div class="top-actions"><span class="save-state" id="saveState">Saved locally</span><button class="button subtle" id="newProjectButton" type="button">New edit</button><button class="button primary" id="exportButton" type="button" disabled>Export video <span aria-hidden="true">↗</span></button></div>
     </header>
 
     <main id="welcome" class="welcome" hidden>
-      <section class="welcome-left">
-        <div class="welcome-step">A better first cut starts here <span>01 / 03</span></div>
-        <h1>Your footage,<br><em>with a point of view.</em></h1>
-        <p>Tell Spool what you want the video to say. Bring the clips. The first cut gives you a strong place to start, and every choice stays yours to edit.</p>
+      <div class="welcome-shell">
+        <div class="welcome-heading"><span class="welcome-step">NEW VIDEO</span><h1>Raw clips. First cut.</h1><p class="welcome-subtitle">Cuts, captions and music. All editable.</p></div>
         <form id="createForm" class="create-form">
-          <label for="storyIdea">What is this video about?</label>
-          <textarea id="storyIdea" name="brief" rows="3" placeholder="Example: A calm, confident 45-second explanation of why our product makes planning easier." required></textarea>
-          <div class="form-pair"><div><label for="videoFormat">Frame</label><select id="videoFormat" name="format"><option value="vertical">Vertical · 9:16</option><option value="wide">Landscape · 16:9</option><option value="square">Square · 1:1</option></select></div><div><label for="videoPace">Pace</label><select id="videoPace" name="pace"><option value="balanced">Balanced</option><option value="calm">Calm</option><option value="brisk">Brisk</option></select></div></div>
-          <label for="welcomeFiles">Your clips</label>
-          <div class="dropzone" id="welcomeDrop"><input id="welcomeFiles" type="file" accept="video/*,audio/*" multiple required><div class="drop-icon" aria-hidden="true">＋</div><strong>Drop footage here or browse</strong><span>MP4, MOV, WebM and more · up to 1 GB per file</span><div id="welcomeFileNames" class="selected-files"></div></div>
-          <button class="button primary create-button" type="submit">Create first cut <span aria-hidden="true">↗</span></button>
-          <p class="local-note">Runs on this computer. Your files stay in the AIEditor folder.</p>
+          <div class="upload-panel">
+            <label for="welcomeFiles">Your footage</label>
+            <div class="dropzone" id="welcomeDrop"><input id="welcomeFiles" type="file" accept="video/*,audio/*" multiple required><div class="drop-art" aria-hidden="true"><span class="film-frame frame-one"><i></i></span><span class="film-frame frame-two"><i></i></span><span class="film-frame frame-three"><i></i></span><span class="cut-mark cut-one"></span><span class="cut-mark cut-two"></span></div><strong>Add your clips</strong><span>Drop videos here or choose files</span><div id="welcomeFileNames" class="selected-files"></div></div>
+          </div>
+          <div class="direction-panel">
+            <label for="storyIdea">Describe the edit</label>
+            <textarea id="storyIdea" name="brief" rows="4" placeholder="Example: calm pace, tight cuts, clear captions and soft music" required></textarea>
+            <div class="form-pair"><div><label for="videoFormat">Format</label><select id="videoFormat" name="format"><option value="vertical">Vertical · 9:16</option><option value="wide">Landscape · 16:9</option><option value="square">Square · 1:1</option></select></div><div><label for="videoPace">Pace</label><select id="videoPace" name="pace"><option value="balanced">Balanced</option><option value="calm">Calm</option><option value="brisk">Brisk</option></select></div></div>
+            <button class="button primary create-button" type="submit">Create first cut <span aria-hidden="true">↗</span></button>
+            <p class="local-note">Your files stay on this computer.</p>
+          </div>
         </form>
-        <div class="recent" id="recentProjects" hidden><h2>Continue editing</h2><div id="recentList"></div></div>
-      </section>
-      <section class="welcome-right" aria-label="Editing workflow illustration"><div class="composition"><div class="comp-frame"><span class="comp-corner tl"></span><span class="comp-corner tr"></span><div class="comp-big">THE STORY<br>IS IN THE<br><span>CUT.</span></div><div class="comp-caption">FROM RAW CLIPS TO A STORY WORTH WATCHING</div><span class="comp-corner bl"></span><span class="comp-corner br"></span></div><div class="comp-track"><span class="comp-label">RAW FOOTAGE</span><div class="comp-long"><b></b><b></b><b></b><b></b></div><span class="comp-time">01:32</span></div><div class="comp-track"><span class="comp-label">FIRST CUT</span><div class="comp-short"><b></b><b></b><b></b></div><span class="comp-time">00:42</span></div><div class="comp-guide"><span></span> Every decision stays editable</div></div></section>
+        <div class="recent" id="recentProjects" hidden><h2>Recent projects</h2><div id="recentList"></div></div>
+      </div>
     </main>
 
     <main id="editor" class="editor" hidden>
       <aside class="side-panel story-panel" aria-label="Project and source media">
-        <div class="panel-heading"><h2>Story</h2><span>01</span></div>
-        <label for="briefEditor">Creative direction</label><textarea id="briefEditor" rows="5" placeholder="Describe the story, audience and feeling"></textarea>
-        <div class="brief-tip">The brief guides the first cut. Refine it, then rebuild if needed.</div>
-        <button class="button outline full" id="rebuildButton" type="button">Rebuild first cut</button>
-        <div class="section-rule"></div>
-        <div class="panel-heading"><h2>Media</h2><span id="mediaCount">0</span></div>
+        <button id="mobileProjectTitle" class="mobile-project-title" type="button">New edit</button><div class="panel-heading"><h2>Media</h2><span id="mediaCount">0</span></div>
         <div id="mediaList" class="media-list"></div>
-        <label class="button outline full add-media-label" for="addMediaInput">＋ Add media</label><input id="addMediaInput" type="file" accept="video/*,audio/*" multiple hidden>
-        <div class="section-rule"></div>
-        <div class="panel-heading"><h2>Edit notes</h2><span>02</span></div>
-        <div id="analysisNotes" class="analysis-notes"></div>
+        <label class="button outline full add-media-label" for="addMediaInput">＋ Add clips</label><input id="addMediaInput" type="file" accept="video/*,audio/*" multiple hidden>
+        <details class="story-details"><summary>Direction &amp; edit notes</summary><label for="briefEditor">Direction</label><textarea id="briefEditor" rows="5" placeholder="Describe the story and mood"></textarea><button class="button outline full" id="rebuildButton" type="button">Rebuild first cut</button><div id="analysisNotes" class="analysis-notes"></div></details>
       </aside>
 
       <section class="workbench" aria-label="Video editor">
-        <div class="stage-header"><div><span class="stage-label">PREVIEW</span><span class="stage-sep">/</span><span id="stageFormat">VERTICAL · 9:16</span></div><div class="stage-right"><span id="projectStatus">Ready to edit</span><span class="status-light" aria-hidden="true"></span></div></div>
-        <div class="stage-wrap"><div id="videoStage" class="video-stage vertical"><video id="player" playsinline preload="metadata"></video><video id="cutawayPlayer" playsinline muted preload="metadata" hidden></video><div id="previewOverlays" class="preview-overlays"></div><div id="emptyStage" class="empty-stage" hidden><span>NO FOOTAGE ON THE TIMELINE</span><p>Add a clip from the media panel to start.</p></div></div></div>
+        <div class="stage-header"><div><span class="stage-label">Preview</span><span class="stage-sep">·</span><span id="stageFormat">Vertical · 9:16</span></div><div class="stage-right"><span id="projectStatus">Ready to edit</span><span class="status-light" aria-hidden="true"></span></div></div>
+        <div class="stage-wrap"><div id="videoStage" class="video-stage vertical"><video id="player" playsinline preload="metadata"></video><img id="previewPoster" class="preview-poster" alt="" hidden><video id="cutawayPlayer" playsinline muted preload="metadata" hidden></video><div id="previewOverlays" class="preview-overlays"></div><div id="emptyStage" class="empty-stage" hidden><span>NO FOOTAGE ON THE TIMELINE</span><p>Add a clip from the media panel to start.</p></div></div></div>
         <div class="transport"><button id="skipBack" class="transport-button" type="button" aria-label="Back five seconds">↶</button><button id="playButton" class="transport-play" type="button" aria-label="Play">Play</button><button id="skipForward" class="transport-button" type="button" aria-label="Forward five seconds">↷</button><span class="timecode" id="timecode">00:00 <span>/ 00:00</span></span><div class="transport-spacer"></div><button id="captionsToggle" class="tool-pill" type="button" aria-pressed="false">CC <span>Captions</span></button><button id="addTitleButton" class="tool-pill" type="button">T <span>Add title</span></button></div>
-        <div class="timeline-shell"><div class="timeline-top"><div><span class="timeline-heading">Timeline</span><span class="timeline-help">Select a moment to adjust it</span></div><div class="timeline-actions"><button id="undoButton" type="button" title="Undo (⌘Z)" aria-label="Undo">↶</button><button id="redoButton" type="button" title="Redo (⌘⇧Z)" aria-label="Redo">↷</button><span class="toolbar-divider"></span><button id="splitButton" type="button" title="Split at playhead (S)">Split</button><button id="deleteButton" type="button" title="Delete selected (Delete)">Delete</button><span class="toolbar-divider"></span><label for="zoomRange">Zoom</label><input id="zoomRange" type="range" min="18" max="100" value="38"></div></div><div class="timeline-scroll" id="timelineScroll"><div class="timeline-inner" id="timelineInner"><div id="ruler" class="ruler"></div><div class="track-row"><div class="track-label"><span>01</span> Video</div><div id="videoTrack" class="track video-track"></div></div><div class="track-row"><div class="track-label"><span>02</span> Cutaways</div><div id="cutawayTrack" class="track cutaway-track"></div></div><div class="track-row"><div class="track-label"><span>03</span> Captions</div><div id="captionTrack" class="track caption-track"></div></div><div class="track-row"><div class="track-label"><span>04</span> Graphics</div><div id="graphicTrack" class="track graphic-track"></div></div><div class="track-row"><div class="track-label"><span>05</span> Music</div><div id="musicTrack" class="track music-track"></div></div><div id="playhead" class="playhead"><span></span></div></div></div><div class="timeline-footer"><span>Space to play / pause</span><span>S to split</span><span>Drag clips to reorder</span></div></div>
+        <div class="timeline-shell"><div class="timeline-top"><div><span class="timeline-heading">Timeline</span></div><div class="timeline-actions"><button id="undoButton" type="button" title="Undo (⌘Z)" aria-label="Undo">↶</button><button id="redoButton" type="button" title="Redo (⌘⇧Z)" aria-label="Redo">↷</button><span class="toolbar-divider"></span><button id="splitButton" type="button" title="Split at playhead (S)">Split</button><button id="deleteButton" type="button" title="Delete selected (Delete)">Delete</button><span class="toolbar-divider"></span><label for="zoomRange">Zoom</label><input id="zoomRange" type="range" min="18" max="100" value="38"></div></div><div class="timeline-scroll" id="timelineScroll"><div class="timeline-inner" id="timelineInner"><div id="ruler" class="ruler"></div><div class="track-row"><div class="track-label" title="Video"><span>Video</span></div><div id="videoTrack" class="track video-track"></div></div><div class="track-row"><div class="track-label" title="Cutaways"><span>Cutaways</span></div><div id="cutawayTrack" class="track cutaway-track"></div></div><div class="track-row"><div class="track-label" title="Captions"><span>Captions</span></div><div id="captionTrack" class="track caption-track"></div></div><div class="track-row"><div class="track-label" title="Graphics"><span>Graphics</span></div><div id="graphicTrack" class="track graphic-track"></div></div><div class="track-row"><div class="track-label" title="Music"><span>Music</span></div><div id="musicTrack" class="track music-track"></div></div><div id="playhead" class="playhead"><span></span></div></div></div></div>
       </section>
 
-      <aside class="side-panel inspector-panel" aria-label="Selected item settings"><div class="panel-heading"><h2>Inspector</h2><button id="returnPreviewButton" class="return-preview" type="button">↑ Preview</button><span>03</span></div><div id="inspector"></div></aside>
+      <aside class="side-panel inspector-panel" aria-label="Selected item settings"><div class="panel-heading"><h2>Adjust</h2><button id="returnPreviewButton" class="return-preview" type="button">Close</button></div><div id="miniPreview" class="mini-preview" hidden><div class="mini-stage"><video id="miniPlayer" muted playsinline preload="metadata"></video><div id="miniOverlays" class="mini-overlays"></div></div><span>Live preview</span></div><div id="inspector"></div></aside>
     </main>
   </div>
   <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>

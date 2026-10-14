@@ -1,6 +1,6 @@
-# Spool — local AI video editor
+# Advanced AI Editor — local video editor
 
-Spool is a working local web app for making an editable first cut from raw footage. It is the foundation for a hosted product; the paywall comes later.
+Advanced AI Editor is a local web app for making an editable first cut from raw footage. Its design uses a light workspace, a focused upload flow and compact editing controls. It is the foundation for a hosted product; the paywall comes later.
 
 ## Run it
 
@@ -12,7 +12,7 @@ On this Mac, open a terminal in the AIEditor folder and run:
 
 Then open [http://localhost:8000](http://localhost:8000). The server listens only on this computer (`127.0.0.1`). Keep the terminal open while using the app.
 
-Requirements: Python 3.11 and FFmpeg/FFprobe. `run.sh` creates a local Python environment and installs the listed packages. The first speech analysis downloads the multilingual Whisper `small` model to `data/models`; this can take a little while. Set `SPOOL_WHISPER_MODEL=base` before running if you want a faster, smaller model with lower transcription accuracy.
+Requirements: Python 3.11 and FFmpeg/FFprobe. `run.sh` creates a local Python environment and installs the listed packages. The first speech analysis downloads the multilingual Whisper `small` model to `data/models`; this can take a little while. Set `AI_EDITOR_WHISPER_MODEL=base` before running if you want a faster, smaller model with lower transcription accuracy.
 
 ## What works now
 

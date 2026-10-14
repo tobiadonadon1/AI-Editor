@@ -1,43 +1,45 @@
-# Spool — direction and product brief
+# Advanced AI Editor — design direction
 
-Self-authored from the user's brief, 14 October 2026.
+Self-authored redesign brief from the user's feedback, 14 October 2026.
 
-## Job
+## Current
 
-A creator brings an idea and raw clips. Spool makes a strong first edit: removes dead air, prepares captions, suggests restrained graphics, balances the image, and gives the creator direct control of every decision before export. It does not promise virality.
+The earlier Spool interface used charcoal, amber, a large editorial poster, numbered panels and many explanatory sentences. Its strongest feature was the actual editor beneath that styling: source media, preview, timeline, inspector and reversible edits. The user explicitly rejected the name, orange and black palette, density and visual style.
 
-## First version
+## Job and keep list
 
-Short talking-head videos with optional supporting clips and a music track. Local processing on the user's computer. No account or paywall yet. The architecture keeps project data separate from processing so hosted storage, queues, authentication and billing can be added later.
+The first action is to add footage and describe the desired edit. The editor then makes a first cut; the creator reviews it and changes every decision. Keep upload, format and pace, project reopen, transcript captions, source media, preview, five timeline tracks, split/trim/reorder, cutaways, title graphics, image adjustments, music, export and local save. Preserve project data and the processing engine.
 
-## Three directions
+## Reference and decision
 
-1. **Cutting room** (object/material): a charcoal editing bench with a large, honest video stage. Warm amber marks selected moments. Compact sans labels and a ribbon timeline. Motion is the playhead and clip blocks responding to edits.
-2. **Story wall** (place): a bright pin-up space where shots look like contact sheets. Blue marks the chosen take. Editorial type and rearranged strips. Motion is clips sliding onto a board.
-3. **Broadcast desk** (media): a saturated blue console with hard yellow signals and precise condensed lettering. The story is monitored like a live transmission. Motion is stepped meters.
+Higgsfield's current workspace makes a single creation action prominent and tucks secondary choices close to it. We use that economy of controls. We do not reproduce its black shell or neon accent. The new product name is **Advanced AI Editor** as requested.
 
-Chosen: **Cutting room**. The user's footage provides the visual richness; the application should recede while supporting precise editing. The bright board would compete with footage; the broadcast look suggests live production rather than reflective editing.
+## Three explorations
 
-## Style
+1. **Studio canvas** — cool white and mist blue, cobalt actions, upload as a large working surface, direction beside it. Chosen: best balance of clarity, directness and workspace feel. The final version compresses the mobile form so the action is visible sooner.
+2. **Mint table** — pale mint and green, a compact form beside a sample filmstrip. Rejected: too clinical and the sample reel competes with the creator's footage.
+3. **Blue field** — saturated sky blue, serif headline, floating form. Rejected: reads like a marketing page and buries the first action on phones.
 
-- Ground: `#151513`; stage: `#0b0b0a`; panel: `#22221f`; raised: `#2c2b27`.
-- Text: `#f3f0e8`; secondary: `#b8b4a9`; rules: `#3c3b35`.
-- Accent: `#e8ad69`, used for the primary action and selected timeline content.
-- UI type: system sans, with clear weight contrast and tabular time figures.
-- Corners: 8px on controls, 14px on large panels. Clip edges remain square so cuts are exact.
-- Density: spacious stage, compact timeline and inspector.
-- Signature: when an edit is planned, the amber cut markers appear sequentially along the footage strip. Reduced motion shows them immediately.
+The new look differs from the old on ground, type, accent, richness and shell. It refuses the dark dev-tool face and the generic paper-and-serif landing page.
 
-## Core screen content
+## Tokens
 
-Header: Spool, project name, save state, Export video.
-Left: Story brief, source media, Edit decisions.
-Center: large preview, transport, edit timeline and tracks.
-Right: settings for the selected clip, title, caption or audio. Values can be changed directly.
-First run: “Start with footage.” Import clips and describe the video you want.
-Processing: show the actual phase, with media and existing edits still visible.
-Error: preserve project and explain the failed step and retry.
+- Ground `#F5F7FC`, surface `#FFFFFF`, soft surface `#ECF2FF`, stage `#E9EEF7`.
+- Ink `#263653`, secondary `#536783`, rule `#DCE5F1`.
+- Cobalt `#315EF4` handles primary actions and selected items. Aqua `#D9F3F0` and lavender `#E9E5FB` identify supporting timeline tracks without acting as status colours.
+- Avenir Next carries the UI on macOS; Segoe UI and Arial are metric-conscious fallbacks. Text is 14–15px for controls, 12px minimum for metadata, 32–40px for the first-run heading.
+- Spacing follows 4, 8, 12, 16, 24, 32, 48. Controls have 10–12px radii; the upload surface uses 20px.
 
-## Technical boundary
+## Shell and content
 
-Local FFmpeg handles media operations and export. Local speech recognition is optional and downloaded separately. With no transcription model installed, the app can still find quiet sections and build a reversible first cut, but captions require transcription. Future hosted AI can use the same project format.
+First run: brand; heading “Raw clips. First cut.”; footage drop with a three-frame edit motif; “Describe the edit”; format and pace; “Create first cut”; recent projects only when present. No decorative marketing panel.
+
+Editor: a quiet top bar, compact media rail, prominent preview, practical timeline, and an inspector that shows only the selected item's controls. Brief and edit notes sit in one disclosure. A ready project shows factual clip and caption counts. At tablet width, preview and timeline use the full row with controls and media below. On phones, selecting an item opens its controls in a bottom sheet with a small live preview.
+
+## Signature
+
+Adding files replaces the three-frame edit motif with frames extracted locally from the selected video. The visual transition lasts about 240ms with an ease-out. Reduced motion makes the change instantly. Timeline blocks show source ranges, so a cut remains legible even when several blocks share a filename. The playhead remains the main movement once editing starts.
+
+## Voice and states
+
+Short, specific and calm: labels say what changes. Empty state has one action. Processing keeps the editor visible and reports progress. Errors keep the project and say what to retry. No virality claim.

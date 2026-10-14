@@ -1,5 +1,6 @@
 .venv/
 data/
 work/
+design/
 __pycache__/
 *.pyc

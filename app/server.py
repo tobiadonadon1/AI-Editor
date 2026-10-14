@@ -26,7 +26,7 @@ DATA = ROOT / "data"
 PROJECTS = DATA / "projects"
 WEB = ROOT / "web"
 PROJECTS.mkdir(parents=True, exist_ok=True)
-app = FastAPI(title="Spool", docs_url="/api/docs")
+app = FastAPI(title="Advanced AI Editor", docs_url="/api/docs")
 LOCK = threading.RLock()
 SUPPORTED_VIDEO = {".mp4", ".mov", ".m4v", ".webm", ".mkv"}
 SUPPORTED_AUDIO = {".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac"}
@@ -163,7 +163,7 @@ def transcribe(path: Path) -> tuple[list[dict], str]:
     """Download a local model on first use. A failed download leaves editing usable."""
     try:
         from faster_whisper import WhisperModel
-        model_name = os.getenv("SPOOL_WHISPER_MODEL", "small")
+        model_name = os.getenv("AI_EDITOR_WHISPER_MODEL", os.getenv("SPOOL_WHISPER_MODEL", "small"))
         model = WhisperModel(model_name, device="cpu", compute_type="int8", download_root=str(DATA / "models"))
         segments, _ = model.transcribe(str(path), word_timestamps=True, vad_filter=True, beam_size=5)
         words = []
@@ -706,7 +706,7 @@ def download_export(project_id: str):
     path = project_dir(project_id) / "export.mp4"
     if not path.exists():
         raise HTTPException(404, "No export yet")
-    return FileResponse(path, media_type="video/mp4", filename=f"spool-{project_id}.mp4")
+    return FileResponse(path, media_type="video/mp4", filename=f"advanced-ai-editor-{project_id}.mp4")
 
 
 @app.get("/media/{project_id}/{filename}")

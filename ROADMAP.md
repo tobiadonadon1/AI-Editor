@@ -2,7 +2,7 @@
 
 ## 1. Prove the creative quality
 
-Edit at least ten real customer-style videos: talking head, tutorial, product story and interview, in different languages and lighting. Compare Spool's first cut with an experienced editor's cut. Review missed words, bad cuts, pacing, caption timing, unnecessary graphics, music level and export fidelity. Let those failures set the next engineering priorities.
+Edit at least ten real customer-style videos: talking head, tutorial, product story and interview, in different languages and lighting. Compare Advanced AI Editor's first cut with an experienced editor's cut. Review missed words, bad cuts, pacing, caption timing, unnecessary graphics, music level and export fidelity. Let those failures set the next engineering priorities.
 
 ## 2. Build a stronger edit brain
 
