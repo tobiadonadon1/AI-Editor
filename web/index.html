@@ -1,84 +1,13 @@
 <!doctype html>
 <html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="dark">
-  <meta name="theme-color" content="#141311">
-  <meta name="description" content="Turn raw footage into a first cut you can make your own.">
-  <meta property="og:title" content="Advanced AI Editor">
-  <meta property="og:description" content="Turn raw footage into a first cut you can make your own.">
-  <meta property="og:image" content="/assets/editor-sample-city.webp">
-  <title>Advanced AI Editor</title>
-  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/styles.css">
-  <link rel="stylesheet" href="/studio.css">
-</head>
-<body>
-  <noscript>Advanced AI Editor needs JavaScript to edit and preview video.</noscript>
-  <div id="app">
-    <aside class="app-rail" aria-label="Workspace navigation">
-      <button class="rail-logo" id="railHome" type="button" aria-label="Advanced AI Editor home"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M5 5h9v22H5zM18 5h9v22h-9z" fill="currentColor"/><path d="M8 10h3M21 20h3" stroke="#101113" stroke-width="2"/></svg></button>
-      <button class="rail-link current" id="railCreate" type="button" aria-label="New project" title="New project"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4zM8 9h8M8 12h8M8 15h5"/></svg></button>
-      <button class="rail-link" id="railProjects" type="button" aria-label="Recent projects" title="Recent projects"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v4H4zM4 11h16v4H4zM4 17h16v3H4z"/></svg></button>
-    </aside>
-    <div class="app-body">
-    <header class="topbar">
-      <button class="brand" id="brandButton" type="button" aria-label="Advanced AI Editor home"><span>Advanced AI Editor</span></button>
-      <span class="topbar-mode">New project</span>
-      <div class="header-divider"></div>
-      <div class="project-heading"><button id="projectTitle" class="project-title" type="button">New edit</button></div>
-      <div class="top-actions"><span class="save-state" id="saveState">Saved</span><button class="button subtle" id="newProjectButton" type="button">New project</button><button class="button primary" id="exportButton" type="button" disabled>Export video <span aria-hidden="true">↗</span></button></div>
-    </header>
-
-    <main id="welcome" class="welcome" hidden>
-      <div class="welcome-shell">
-        <form id="createForm" class="create-form">
-          <div class="upload-panel">
-            <label class="visually-hidden" for="welcomeFiles">Add footage</label>
-            <div class="dropzone" id="welcomeDrop">
-              <input id="welcomeFiles" type="file" accept="video/*,audio/*" multiple required>
-              <div class="drop-art" aria-hidden="true"><span id="dropKind" class="sample-indicator">EXAMPLE FRAME</span><div class="thumbnail-strip"><span class="film-frame frame-one"></span><span class="film-frame frame-two"></span><span class="film-frame frame-three"></span></div></div>
-              <div class="drop-caption"><div><strong>Add your footage</strong><span id="dropHint">Drop video or browse files</span><div id="welcomeFileNames" class="selected-files"></div></div><span class="drop-add" aria-hidden="true">+</span></div>
-            </div>
-          </div>
-          <div class="direction-panel">
-            <span class="welcome-step">NEW PROJECT</span><h1>Give the footage<br>a direction.</h1>
-            <label class="visually-hidden" for="storyIdea">Describe the edit</label>
-            <textarea id="storyIdea" name="brief" rows="4" placeholder="Describe the pace, what to keep, captions, sound and mood…" required></textarea>
-            <div class="form-pair"><div><label for="videoFormat">Format</label><select id="videoFormat" name="format"><option value="vertical">Vertical · 9:16</option><option value="wide">Landscape · 16:9</option><option value="square">Square · 1:1</option></select></div><div><label for="videoPace">Pace</label><select id="videoPace" name="pace"><option value="balanced">Balanced</option><option value="calm">Calm</option><option value="brisk">Brisk</option></select></div></div>
-            <div id="backendNotice" class="backend-notice" role="alert" hidden><strong>Processing is not connected</strong><p id="backendMessage">This deployment needs a video-processing server.</p><button id="retryBackend" type="button">Check again</button></div>
-            <p id="browserNote" class="browser-note" hidden>Your clips and edits stay in this browser.</p>
-            <button class="button primary create-button" type="submit">Create first cut <span aria-hidden="true">↗</span></button>
-          </div>
-        </form>
-        <div class="welcome-footer">The first cut is a starting point. Review every edit.</div>
-        <div class="recent" id="recentProjects" hidden><h2>Recent projects</h2><div id="recentList"></div></div>
-      </div>
-    </main>
-
-    <main id="editor" class="editor" hidden>
-      <aside class="side-panel story-panel" aria-label="Project and source media">
-        <button id="mobileProjectTitle" class="mobile-project-title" type="button">New edit</button><div class="panel-heading"><h2>Media</h2><span id="mediaCount">0</span></div>
-        <div id="mediaList" class="media-list"></div>
-        <label class="button outline full add-media-label" for="addMediaInput">＋ Add clips</label><input id="addMediaInput" type="file" accept="video/*,audio/*" multiple hidden>
-        <details class="story-details"><summary>Direction &amp; edit notes</summary><label for="briefEditor">Direction</label><textarea id="briefEditor" rows="5" placeholder="Describe the story and mood"></textarea><button class="button outline full" id="rebuildButton" type="button">Rebuild first cut</button><div id="analysisNotes" class="analysis-notes"></div></details>
-      </aside>
-
-      <section class="workbench" aria-label="Video editor">
-        <div class="stage-header"><div><span class="stage-label">Preview</span><span class="stage-sep">·</span><span id="stageFormat">Vertical · 9:16</span></div><div class="stage-right"><span id="projectStatus">Ready to edit</span><span class="status-light" aria-hidden="true"></span></div></div>
-        <div class="stage-wrap"><div id="videoStage" class="video-stage vertical"><video id="player" playsinline preload="metadata"></video><img id="previewPoster" class="preview-poster" alt="" hidden><video id="cutawayPlayer" playsinline muted preload="metadata" hidden></video><div id="previewOverlays" class="preview-overlays"></div><div id="emptyStage" class="empty-stage" hidden><span>NO FOOTAGE ON THE TIMELINE</span><p>Add a clip from the media panel to start.</p></div></div></div>
-        <div class="transport"><button id="skipBack" class="transport-button" type="button" aria-label="Back five seconds">↶</button><button id="playButton" class="transport-play" type="button" aria-label="Play">Play</button><button id="skipForward" class="transport-button" type="button" aria-label="Forward five seconds">↷</button><span class="timecode" id="timecode">00:00 <span>/ 00:00</span></span><div class="transport-spacer"></div><button id="captionsToggle" class="tool-pill" type="button" aria-pressed="false">CC <span>Captions</span></button><button id="addCaptionButton" class="tool-pill" type="button">CC <span>Add caption</span></button><button id="addTitleButton" class="tool-pill" type="button">T <span>Add title</span></button></div>
-        <div class="timeline-shell"><div class="timeline-top"><div><span class="timeline-heading">Timeline</span></div><div class="timeline-actions"><button id="undoButton" type="button" title="Undo (⌘Z)" aria-label="Undo">↶</button><button id="redoButton" type="button" title="Redo (⌘⇧Z)" aria-label="Redo">↷</button><span class="toolbar-divider"></span><button id="splitButton" type="button" title="Split at playhead (S)">Split</button><button id="deleteButton" type="button" title="Delete selected (Delete)">Delete</button><span class="toolbar-divider"></span><label for="zoomRange">Zoom</label><input id="zoomRange" type="range" min="18" max="100" value="38"></div></div><div class="timeline-scroll" id="timelineScroll"><div class="timeline-inner" id="timelineInner"><div id="ruler" class="ruler"></div><div class="track-row"><div class="track-label" title="Video"><span>Video</span></div><div id="videoTrack" class="track video-track"></div></div><div class="track-row"><div class="track-label" title="Cutaways"><span>Cutaways</span></div><div id="cutawayTrack" class="track cutaway-track"></div></div><div class="track-row"><div class="track-label" title="Captions"><span>Captions</span></div><div id="captionTrack" class="track caption-track"></div></div><div class="track-row"><div class="track-label" title="Graphics"><span>Graphics</span></div><div id="graphicTrack" class="track graphic-track"></div></div><div class="track-row"><div class="track-label" title="Music"><span>Music</span></div><div id="musicTrack" class="track music-track"></div></div><div id="playhead" class="playhead"><span></span></div></div></div></div>
-      </section>
-
-      <aside class="side-panel inspector-panel" aria-label="Selected item settings"><div class="panel-heading"><h2>Adjust</h2><button id="returnPreviewButton" class="return-preview" type="button">Close</button></div><div id="miniPreview" class="mini-preview" hidden><div class="mini-stage"><video id="miniPlayer" muted playsinline preload="metadata"></video><div id="miniOverlays" class="mini-overlays"></div></div><span>Live preview</span></div><div id="inspector"></div></aside>
-    </main>
-    </div>
-  </div>
-  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
-  <script src="/browser-engine.js" defer></script>
-  <script src="/browser-export.js" defer></script>
-  <script src="/app.js" defer></script>
-</body>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AI Editor</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%23315EF4'/><path d='M12 9l11 7-11 7z' fill='white'/></svg>" />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
 </html>

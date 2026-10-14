@@ -1,6 +1,13 @@
+node_modules/
+dist/
+storage/
+.env
+.env.*
+!.env.example
+.DS_Store
+# old prototype leftovers
 .venv/
 data/
 work/
 design/
 __pycache__/
-*.pyc

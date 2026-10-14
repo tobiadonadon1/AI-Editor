@@ -1,49 +1,55 @@
-# Advanced AI Editor
+# AI Editor
 
-An editable first-cut workspace for raw footage. The interface uses a warm stone and black palette, with media at the center.
-
-## Hosted on Vercel
-
-`vercel.json` deploys `web/` as a static site. The hosted editor processes clips in the browser and saves projects and source files in that browser's IndexedDB. It does not send large video files through a Vercel function. A user can upload clips, remove measured quiet sections, review and change cuts, add titles or captions, adjust image and sound, place cutaways, choose a generated music bed or upload audio, and download an MP4 where supported (WebM fallback). The export plays through in real time; keep the tab open until it downloads. Browser storage is device-specific and can be cleared by the browser.
-
-Hosted mode does not currently transcribe speech or make semantic edit decisions. Captions are manual. The first cut uses audio energy; if the browser cannot decode a file for analysis, it keeps the full clip. This is a usable browser editor, not the complete AI product described in the roadmap.
-
-To test hosted mode locally, serve `web/` as static files and open `/?mode=browser` on localhost. Normal `http://localhost:8000/` uses the Python server below.
+Upload a raw vertical talking-head video, describe the edit you want, and get a finished edit back: mistakes and retakes cut, pauses trimmed, animated captions with key words. Then change anything by hand and export an MP4.
 
 ## Run it
 
-On this Mac, open a terminal in the AIEditor folder and run:
+1. Copy `.env.example` to `.env` and add your keys:
+   ```
+   ANTHROPIC_API_KEY=...
+   ELEVENLABS_API_KEY=...
+   ```
+2. Start the app:
+   ```sh
+   npm install
+   npm run dev
+   ```
+3. Open http://localhost:5173
 
-```sh
-./run.sh
+Requires Node 22+ and FFmpeg (`brew install ffmpeg`). The first export downloads a headless Chrome for rendering (~170 MB, once).
+
+To try the editor without API keys: `npx tsx scripts/seed-sample.ts` creates a ready sample project from `samples/`.
+
+## How it works
+
+```
+video + brief
+  1. Prepare     FFmpeg makes an editing copy (1080x1920, 30fps) and a small audio file
+  2. Transcribe  ElevenLabs Scribe v2, word timings, verbatim (keeps "um", false starts)
+  3. Plan        Claude Opus 5.5 reads the transcript + brief and returns which words to cut and why,
+                 plus key words for captions (structured JSON)
+  4. Timeline    Kept words become clips; long pauses are trimmed; every word is re-timed
+                 onto the shorter output timeline (src/shared/timeline.ts)
+  5. Preview     Remotion Player in the browser
+  6. Export      Remotion renders the same composition to MP4
 ```
 
-Then open [http://localhost:8000](http://localhost:8000). The server listens only on this computer (`127.0.0.1`). Keep the terminal open while using the app.
+The project file (`storage/projects/<id>/project.json`) is the single source of truth. The AI writes it, the editor changes it, and the preview and export both render it, so what you see is what you export.
 
-Requirements: Python 3.11 and FFmpeg/FFprobe. `run.sh` creates a local Python environment and installs the listed packages. The first speech analysis downloads the multilingual Whisper `small` model to `data/models`; this can take a little while. Set `AI_EDITOR_WHISPER_MODEL=base` before running if you want a faster, smaller model with lower transcription accuracy.
+## Editing
 
-## What works now
+- **Transcript tab**: click a word to jump to it. Shift-click or drag to select. `Delete` cuts, `R` restores, `K` toggles a key word, `Space` plays, `⌘Z` undoes.
+- **AI edit tab**: see what the AI did, change the brief and re-edit. Your own cuts are kept.
+- **Captions tab**: position, words on screen, colours, uppercase, pause trimming.
 
-1. Start from an idea, choose aspect ratio and pace, and import one or more clips.
-2. Local Whisper transcribes speech and returns word timings. The first cut removes longer quiet gaps while leaving short handles around speech. Silent footage remains intact.
-3. The app measures sample frames and proposes a restrained brightness adjustment. The brief can select a music mood, a requested duration note and, when specified as `Title: ...`, a title graphic. It can suggest a small number of additional text moments when clear speech matches brief keywords.
-4. Inspect the first cut in a five-track timeline. Split, trim, delete and reorder clips. Edit caption words and timing, and add or edit titles. Place visual cutaways over the main footage while keeping the narration. Adjust brightness, contrast, saturation and original-sound volume.
-5. Choose one of two quiet original synth beds or add your own audio track. Set music volume independently.
-6. Export a 720p vertical or landscape MP4, or a 1080p square MP4. FFmpeg renders the same clip order, cutaways, captions, graphics, image settings and music shown in the project. Edits after export require a fresh render.
-7. Projects save automatically as JSON and source media in `data/projects/<id>/`.
+## Layout
 
-## Honest limits
+- `src/shared/` project format and timeline logic (used by server, preview and renderer)
+- `src/remotion/` the video composition: cut clips + captions
+- `src/server/` local API, FFmpeg, transcription, Claude planner, rendering
+- `web/` editor UI (React + Vite)
+- `storage/` projects and media (not committed)
 
-This is a local product prototype. It does **not** predict virality, understand the meaning of every shot, generate new video footage, offer a licensed commercial music catalog, remove filler words reliably, or perform professional color grading. The editing plan currently uses local speech recognition, measured silence and exposure, and conservative rules derived from the brief. Users should review captions and the final cut before publishing. No paid API is required.
+`npm test` runs the unit tests, `npm run typecheck` the type checker, `npm run studio` opens Remotion Studio.
 
-The interface and project format are designed to support more advanced creative models later, without discarding manual edits. Current cutaways are chosen and positioned by the user. More ambitious AI cutaway selection needs visual understanding of both the narration and supporting footage.
-
-## Product architecture
-
-- `web/`: dependency-free editor interface.
-- `app/server.py`: local API, analysis, project persistence, media processing and export.
-- `data/`: user projects, uploaded files, local speech model and original generated audio beds (ignored by Git).
-- `DIRECTION.md`: product and visual direction.
-- `ROADMAP.md`: quality and hosted-product milestones.
-
-A commercial hosted version should add accounts, isolated storage, upload limits, background workers, a render queue, retryable jobs, observability, billing and license review before opening this server to the internet. Do not expose the current local server publicly.
+Remotion is free for individuals and companies of up to 3 people; larger companies need a Remotion company license.

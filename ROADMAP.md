@@ -1,21 +1,11 @@
-# From working editor to a sellable product
+# Roadmap
 
-## 1. Prove the creative quality
+Goal: an AI editor. Raw video + brief in, finished styled edit out, with full manual control.
 
-Edit at least ten real customer-style videos: talking head, tutorial, product story and interview, in different languages and lighting. Compare Advanced AI Editor's first cut with an experienced editor's cut. Review missed words, bad cuts, pacing, caption timing, unnecessary graphics, music level and export fidelity. Let those failures set the next engineering priorities.
-
-## 2. Build a stronger edit brain
-
-Add a video-understanding pass on selected frames and transcript spans. Use it to identify the hook, repeated ideas, visual changes and moments that genuinely benefit from an explanation graphic. Make each suggestion cite its source time and the reason for the choice. Keep a human review point before expensive generation or final export.
-
-## 3. Make graphics distinctive
-
-Create a small motion design system: explainers, comparison cards, animated diagrams and visual emphasis, with consistent typography and restrained transitions. Let users edit the text, timing, colors and placement. Give styles names based on the result, rather than model or rendering technology.
-
-## 4. Better sound and picture
-
-Add automatic dialogue leveling, noise cleanup, music ducking, shot-matched exposure and white balance. Support licensed music and sound effects with rights tracked per project. Preview and final render must use the same edit recipe.
-
-## 5. Turn it into a hosted app
-
-Move project media to private object storage; run transcription and render jobs in isolated workers; add progress, retries and cancellation. Then add accounts, quotas, payments, privacy controls and retention settings. Validate infrastructure cost per minute of source footage and per finished minute before setting prices.
+1. **Auto cut + captions** ✅ transcript, AI cuts (retakes, false starts, filler), pause trimming, animated captions, transcript editing, export.
+2. **Motion graphics**: a template library (titles, keyword pop-ups, lists, numbers, callouts, lower thirds). The AI picks moments and fills templates; the user edits text and timing.
+3. **Sound**: whoosh/pop SFX on cuts and graphics, a music bed that ducks under speech, loudness normalisation.
+4. **Look**: auto exposure and white balance, punch-in zooms on emphasis, a colour "look" per style.
+5. **Styles**: one-click presets bundling fonts, colours, captions, graphics, sounds and pacing.
+6. **Chat edits**: "make the intro faster", "add a title at the start" as patches to the project file.
+7. **Advanced**: custom AI-written animations, learning a style from a reference video, export to DaVinci/Premiere.
