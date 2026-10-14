@@ -1,7 +1,7 @@
 import { writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import type { Project, ProjectStatus } from "../shared/project";
-import { extractAudio, makeProxy, probe } from "./ffmpeg";
+import { extractAudio, makePoster, makeProxy, probe } from "./ffmpeg";
 import { transcribe } from "./transcribe";
 import { applyPlan, planEdit } from "./planner";
 import { renderProject } from "./render";
@@ -42,6 +42,7 @@ export function analyze(id: string, originalFile: string) {
       const info = await probe(originalFile);
       await makeProxy(originalFile, proxy, info.hasAudio);
       await extractAudio(proxy, audio);
+      await makePoster(proxy, projectFile(id, "poster.jpg"));
       const out = await probe(proxy);
       await update(id, (p) => {
         p.source = {

@@ -48,3 +48,8 @@ export async function makeProxy(input: string, output: string, hasAudio: boolean
 export async function extractAudio(input: string, output: string) {
   await run("ffmpeg", ["-y", "-i", input, "-vn", "-ac", "1", "-ar", "16000", "-b:a", "64k", output]);
 }
+
+// Small still for the project list, taken a second in.
+export async function makePoster(input: string, output: string) {
+  await run("ffmpeg", ["-y", "-ss", "1", "-i", input, "-frames:v", "1", "-vf", "scale=360:-2", "-q:v", "4", output]);
+}

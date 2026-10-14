@@ -42,6 +42,10 @@ The project file (`storage/projects/<id>/project.json`) is the single source of 
 - **AI edit tab**: see what the AI did, change the brief and re-edit. Your own cuts are kept.
 - **Captions tab**: position, words on screen, colours, uppercase, pause trimming.
 
+## Design
+
+The interface is an actor's script, marked up: Courier pages on a graphite desk, pencil strikes for cuts with the reason in the margin, fluorescent pink for the words that matter (the same pink becomes the highlighted caption word). Direction, tokens, logo research and content are in `DIRECTION.md`; the critique rounds are in `CRITIQUE.md`. Every editor state opens by URL for review, e.g. `#/p/<id>?state=error` (also `processing`, `exporting`, `exported`, `captions`, `playing`, `selected`); nothing is saved in those views.
+
 ## Layout
 
 - `src/shared/` project format and timeline logic (used by server, preview and renderer)

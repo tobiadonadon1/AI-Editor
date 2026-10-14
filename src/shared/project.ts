@@ -95,7 +95,7 @@ export const DEFAULT_SETTINGS: EditSettings = {
 
 export const DEFAULT_CAPTION_STYLE: CaptionStyle = {
   highlightColor: "#FFE14D",
-  emphasisColor: "#5CE1FF",
+  emphasisColor: "#FF8BD0", // same pink as the highlighter on the page
   position: "lower",
   maxWordsPerPage: 3,
   uppercase: true,

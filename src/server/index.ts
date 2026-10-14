@@ -8,6 +8,7 @@ import { serve } from "@hono/node-server";
 import type { Edit } from "../shared/project";
 import { createProject, list, load, projectFile, update } from "./storage";
 import { analyze, isBusy, render, replan } from "./pipeline";
+import { makePoster } from "./ffmpeg";
 
 const PORT = Number(process.env.PORT ?? 8787);
 const ORIGIN = `http://127.0.0.1:${PORT}`;
@@ -98,6 +99,20 @@ app.post("/api/projects/:id/render", async (c) => {
 
 // Media with byte ranges and CORS, so the browser player and the renderer can seek.
 app.use("/media/*", cors());
+app.get("/media/:id/poster.jpg", async (c) => {
+  const id = c.req.param("id");
+  const poster = projectFile(id, "poster.jpg");
+  const proxy = projectFile(id, "proxy.mp4");
+  if (!existsSync(poster)) {
+    if (!existsSync(proxy)) return c.notFound();
+    await makePoster(proxy, poster);
+  }
+  return c.body(Readable.toWeb(createReadStream(poster)) as ReadableStream, 200, {
+    "Content-Type": "image/jpeg",
+    "Cache-Control": "max-age=3600",
+  });
+});
+
 app.get("/media/:id/:file", (c) => {
   const file = c.req.param("file");
   if (!["proxy.mp4", "export.mp4"].includes(file)) return c.notFound();
