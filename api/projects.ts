@@ -56,8 +56,6 @@ export async function DELETE(req: Request) {
   const s = await session(req);
   if (s instanceof Response) return s;
   if (!validId(s.id)) return json({ error: "Bad project id" }, 400);
-  const { error } = await db().from("projects").delete().eq("user_id", s.userId).eq("id", s.id);
-  if (error) return failed("delete the project", error);
   if (hasStorage()) {
     const paths: string[] = [];
     let cursor: string | undefined;
@@ -68,5 +66,6 @@ export async function DELETE(req: Request) {
     } while (cursor);
     if (paths.length) await del(paths);
   }
-  return json({ ok: true });
+  const { error } = await db().from("projects").delete().eq("user_id", s.userId).eq("id", s.id);
+  return error ? failed("delete the project", error) : json({ ok: true });
 }
