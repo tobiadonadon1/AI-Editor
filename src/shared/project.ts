@@ -25,6 +25,7 @@ export interface MediaAsset {
   hasAudio: boolean;
   size: number;
   proxy?: boolean; // a lighter editing copy was made in the browser
+  cloud?: string; // where the edit copy is stored for this account (a Blob path, or a site URL for the sample)
 }
 
 export type WordKind = "word" | "audio_event";

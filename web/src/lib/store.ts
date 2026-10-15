@@ -6,6 +6,8 @@ import { buildTimeline, durationSec, placeItems, type Timeline } from "../../../
 import { store as db } from "./db";
 import { frames, imageThumb, kindOf, makeProxy, monoAudio, needsProxy, peaks, probe, wavChunks } from "./media";
 import { api, ApiError } from "./api";
+import * as cloudApi from "./cloud";
+import { cloud } from "./cloud";
 import { sfxLibrary } from "./sfx";
 
 export type Tool = "select" | "razor" | "type" | "hand";
@@ -39,6 +41,7 @@ export interface EditorState {
   assistantBusy: boolean;
   notice: string | null;
   saving: boolean;
+  synced: "off" | "pending" | "saved" | "error";
 }
 
 const initial: EditorState = {
@@ -63,6 +66,7 @@ const initial: EditorState = {
   assistantBusy: false,
   notice: null,
   saving: false,
+  synced: "off",
 };
 
 let state: EditorState = initial;
@@ -91,7 +95,10 @@ const timelineOf = (p: Project) => buildTimeline(p, mainAsset(p)?.durationSec ??
 
 // ---------- saving ----------
 
+// The browser copy is written right away; the cloud copy a few seconds after the last change
+// (one database write per pause in editing), and immediately when leaving the project.
 let saveTimer: number | undefined;
+let cloudTimer: number | undefined;
 function scheduleSave() {
   window.clearTimeout(saveTimer);
   set({ saving: true });
@@ -100,6 +107,27 @@ function scheduleSave() {
     if (p) await db.putProject(p).catch(() => set({ notice: "Could not save to this browser's storage." }));
     set({ saving: false });
   }, 400);
+  if (cloud.on) {
+    window.clearTimeout(cloudTimer);
+    set({ synced: "pending" });
+    cloudTimer = window.setTimeout(() => void flushCloud(), 2500);
+  }
+}
+
+let syncing: Promise<void> | null = null;
+export async function flushCloud() {
+  window.clearTimeout(cloudTimer);
+  const p = state.project;
+  if (!cloud.on || !p || state.synced !== "pending") return;
+  await syncing;
+  syncing = cloudApi
+    .saveProject(p)
+    .then(() => {
+      if (state.project === p) set({ synced: "saved" });
+    })
+    .catch(() => set({ synced: "error" }))
+    .finally(() => (syncing = null));
+  await syncing;
 }
 
 // Status and chat updates: saved, but not part of undo.
@@ -173,25 +201,42 @@ export function seek(sec: number) {
 
 // ---------- loading ----------
 
+const editCopy = async (asset: MediaAsset) => (asset.proxy && (await db.getMedia(`${asset.id}:proxy`))) || (await db.getMedia(asset.id));
+
 async function urlFor(asset: MediaAsset): Promise<string | null> {
-  const blob = (asset.proxy && (await db.getMedia(`${asset.id}:proxy`))) || (await db.getMedia(asset.id));
+  const blob = await editCopy(asset);
   return blob ? URL.createObjectURL(blob) : null;
 }
 
 export async function openProject(id: string) {
   Object.values(state.media).forEach((u) => URL.revokeObjectURL(u));
-  const project = await db.getProject(id);
-  if (!project) throw new Error("This project is not in this browser. Projects are stored on the device where they were made.");
-  state = { ...initial, workspace: state.workspace, pxPerSec: state.pxPerSec };
+  let project = await db.getProject(id);
+  // The account's copy wins when it is newer (edited on another device) or this browser has none.
+  let remote: Project | null = null;
+  if (cloud.on) {
+    remote = await cloudApi.getProject(id);
+    if (remote && (!project || remote.updatedAt > project.updatedAt)) {
+      project = remote;
+      await db.putProject(remote);
+    }
+  }
+  if (!project) throw new Error(cloud.on ? "This project is not in your account." : "This project is not in this browser. Projects are stored on the device where they were made.");
+  // A project the account does not have yet (made before signing in, or its first save failed) is sent now.
+  const unsynced = cloud.on && (!remote || remote.updatedAt < project.updatedAt);
+  state = { ...initial, workspace: state.workspace, pxPerSec: state.pxPerSec, synced: !cloud.on ? "off" : unsynced ? "pending" : "saved" };
   set({ project, timeline: timelineOf(project) });
+  if (unsynced) void flushCloud();
   void sfxLibrary().then((sfx) => set({ sfx }));
   const media: Record<string, string> = {};
   for (const a of project.assets) {
+    if (!(await editCopy(a)) && a.cloud) await fetchFromCloud(a);
     const url = await urlFor(a);
     if (url) media[a.id] = url;
   }
   set({ media });
   for (const a of project.assets) void loadVisuals(a);
+  // Media imported before signing in, or an upload cut off by closing the tab.
+  for (const a of project.assets) if (!a.cloud && cloud.on) void backUp(project.id, a);
   // A tab closed mid-import leaves the project half-done: resume where it stopped.
   if (project.status === "transcribing" || project.status === "planning" || project.status === "importing") void resume();
 }
@@ -239,6 +284,47 @@ const status = (patch: Partial<Project>) => {
 };
 export const patchProject = status;
 
+// ---------- cloud media ----------
+
+// This device gets the account's edit copy (the proxy when one was made) and treats it as its original.
+async function fetchFromCloud(a: MediaAsset) {
+  const t = task(`Downloading ${a.name}`);
+  try {
+    const blob = await cloudApi.downloadMedia(a.cloud!, (v) => t.progress(v));
+    await db.putMedia(a.id, blob);
+  } catch (e) {
+    set({ notice: `Could not download ${a.name}: ${e instanceof Error ? e.message : String(e)}` });
+  } finally {
+    t.done();
+  }
+}
+
+// Upload the edit copy so the project opens anywhere; the project records where it went.
+async function backUp(projectId: string, a: MediaAsset) {
+  const blob = await editCopy(a);
+  if (!blob || !cloud.on) return;
+  const ext = a.proxy ? "mp4" : (blob instanceof File ? blob.name.split(".").pop() : "") || { video: "mp4", audio: "m4a", image: "jpg" }[a.kind];
+  const path = cloudApi.mediaPath(projectId, a, ext!.toLowerCase());
+  const t = task(`Uploading ${a.name} to your account`);
+  try {
+    await cloudApi.uploadMedia(path, blob, (v) => t.progress(v));
+    const mark = (p: Project): Project => ({ ...p, assets: p.assets.map((x) => (x.id === a.id ? { ...x, cloud: path } : x)) });
+    if (state.project?.id === projectId) setProject(mark(state.project));
+    else {
+      const stored = await db.getProject(projectId);
+      if (stored) {
+        const next = mark(stored);
+        await db.putProject(next);
+        await cloudApi.saveProject(next);
+      }
+    }
+  } catch (e) {
+    set({ notice: `${a.name} is saved in this browser but did not upload to your account: ${e instanceof Error ? e.message : String(e)}. It will retry next time you open the project.` });
+  } finally {
+    t.done();
+  }
+}
+
 // ---------- importing ----------
 
 export async function importFiles(files: File[], opts: { asMain?: boolean } = {}): Promise<MediaAsset[]> {
@@ -275,6 +361,7 @@ export async function importFiles(files: File[], opts: { asMain?: boolean } = {}
       const isMain = (opts.asMain || !cur.mainAssetId) && kind === "video";
       setProject({ ...cur, assets: [...cur.assets, asset], mainAssetId: isMain ? asset.id : cur.mainAssetId });
       void loadVisuals(asset);
+      if (cloud.on) void backUp(cur.id, asset);
       added.push(asset);
     } catch (e) {
       set({ notice: e instanceof Error ? e.message : String(e) });
@@ -381,7 +468,7 @@ export async function ask(prompt: string, mode: "first_cut" | "edit" = "edit") {
     const aborted = e instanceof DOMException && e.name === "AbortError";
     patchChat(reply.id, { pending: false, error: !aborted, text: aborted ? "Stopped." : e instanceof Error ? e.message : String(e) });
     if (mode === "first_cut") status({ status: "ready", statusDetail: undefined });
-    if (e instanceof ApiError && e.code === "access") set({ notice: "access" });
+    if (e instanceof ApiError && e.code === "auth") set({ notice: "Your session expired. Reload the page and sign in again." });
   } finally {
     set({ assistantBusy: false });
     aborter = null;
@@ -420,6 +507,7 @@ export async function createProject(opts: { name: string; brief: string; format:
   p.status = "importing";
   p.statusDetail = "Importing media";
   await db.putProject(p);
+  if (cloud.on) void cloudApi.saveProject(p).catch(() => {});
   return p;
 }
 
@@ -429,7 +517,7 @@ export async function createSample(format: FormatId = "9:16") {
   const [video, words] = await Promise.all([fetch("/sample/talking.mp4").then((r) => r.blob()), fetch("/sample/talking.words.json").then((r) => r.json() as Promise<{ text: string; start: number; end: number }[]>)]);
   const file = new File([video], "talking.mp4", { type: "video/mp4" });
   const info = await probe(file, "video");
-  const asset: MediaAsset = { id: uid("m"), name: "talking", kind: "video", durationSec: info.durationSec, width: info.width, height: info.height, hasAudio: info.hasAudio, size: file.size };
+  const asset: MediaAsset = { id: uid("m"), name: "talking", kind: "video", durationSec: info.durationSec, width: info.width, height: info.height, hasAudio: info.hasAudio, size: file.size, cloud: "/sample/talking.mp4" };
   await db.putMedia(asset.id, file);
   p.assets = [asset];
   p.mainAssetId = asset.id;
@@ -467,6 +555,7 @@ export async function createSample(format: FormatId = "9:16") {
     },
   ];
   await db.putProject(edited);
+  if (cloud.on) await cloudApi.saveProject(edited).catch(() => {});
   return edited;
 }
 

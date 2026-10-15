@@ -1,6 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { EDIT_TOOLS } from "../src/shared/ops.js";
-import { checkAccess, claude, json } from "./_lib/server.js";
+import { authorize, claude, json } from "./_lib/server.js";
 import { FIRST_CUT, SYSTEM } from "./_lib/prompt.js";
 
 interface Body {
@@ -16,8 +16,8 @@ const tools = EDIT_TOOLS.map((t, i) =>
 ) as unknown as Anthropic.Beta.BetaTool[];
 
 export async function POST(req: Request) {
-  const denied = checkAccess(req);
-  if (denied) return denied;
+  const user = await authorize(req);
+  if (user instanceof Response) return user;
   const ai = claude(req);
   if (!ai) return json({ error: "The AI is off: ANTHROPIC_API_KEY is not set on the server.", code: "key" }, 503);
 

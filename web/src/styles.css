@@ -263,6 +263,18 @@ body.resizing-row * {
   font-size: 11px;
   white-space: nowrap;
 }
+button.save-state.warn {
+  color: var(--amber);
+  cursor: pointer;
+}
+button.save-state.warn:hover {
+  text-decoration: underline;
+}
+.header-user {
+  display: flex;
+  align-items: center;
+  margin-left: 10px;
+}
 
 /* ---------- workspace grid ---------- */
 
@@ -2334,6 +2346,15 @@ body.resizing-row * {
   background: var(--panel-3);
   color: var(--white);
 }
+.home-user {
+  margin-top: auto;
+  padding: 8px 4px;
+  border-top: 1px solid var(--line);
+  color: var(--text);
+}
+.home-user + .home-status {
+  margin-top: 6px;
+}
 .home-status {
   margin-top: auto;
   display: flex;
@@ -2585,7 +2606,75 @@ body.resizing-row * {
 
 /* ---------- narrow screens: stack the panels ---------- */
 
+/* ---------- sign in ---------- */
+
+.signin {
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  background: var(--gap);
+}
+.signin-brand {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 14px;
+  padding: 48px clamp(24px, 6vw, 96px);
+  background: var(--frame);
+  border-right: 1px solid var(--line);
+}
+.signin-brand h1 {
+  margin: 6px 0 0;
+  color: var(--white);
+  font-size: 30px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+.signin-brand p {
+  max-width: 440px;
+  margin: 0;
+  color: var(--text-2);
+  font-size: 15px;
+  line-height: 1.5;
+}
+.signin-brand ul {
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 8px;
+  color: var(--text);
+  font-size: 13px;
+}
+.signin-brand li::before {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 10px;
+  border-radius: 1px;
+  background: var(--blue);
+  vertical-align: 2px;
+}
+.signin-form {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px 16px;
+}
+
 @media (max-width: 960px) {
+  .signin {
+    grid-template-columns: 1fr;
+  }
+  .signin-brand {
+    padding: 32px 16px 8px;
+    border-right: 0;
+    background: var(--gap);
+  }
+  .signin-brand ul {
+    display: none;
+  }
   html,
   body,
   #root {

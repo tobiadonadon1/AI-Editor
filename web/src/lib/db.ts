@@ -1,14 +1,22 @@
-// Projects and media live in this browser (IndexedDB). Nothing large leaves the machine:
-// only 16 kHz audio goes to transcription and a text description of the edit goes to the AI.
+// The working copy of projects and media in this browser (IndexedDB), one database per signed-in user.
+// cloud.ts keeps the durable copy in Vercel Blob.
 import type { Project } from "../../../src/shared/project";
 
-const DB = "ai-editor";
+let name = "ai-editor";
 const VERSION = 1;
 
 let opened: Promise<IDBDatabase> | null = null;
+export function selectDatabase(userId: string | null) {
+  const next = userId ? `ai-editor:${userId}` : "ai-editor";
+  if (next === name) return;
+  void opened?.then((d) => d.close());
+  name = next;
+  opened = null;
+}
+
 function db(): Promise<IDBDatabase> {
   opened ??= new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB, VERSION);
+    const req = indexedDB.open(name, VERSION);
     req.onupgradeneeded = () => {
       const d = req.result;
       if (!d.objectStoreNames.contains("projects")) d.createObjectStore("projects", { keyPath: "id" });

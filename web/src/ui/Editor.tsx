@@ -2,9 +2,10 @@ import { useEffect, useRef, useState } from "react";
 import { FORMATS, FORMAT_IDS, FPS, mainAsset, uid, type FormatId } from "../../../src/shared/project";
 import { makeText } from "../../../src/shared/presets";
 import { cutPoints, outputToSource } from "../../../src/shared/timeline";
-import { commit, get, importFiles, openProject, patchProject, player, redo, resume, seek, set, undo, useEditor, type Tool, type Workspace } from "../lib/store";
+import { UserButton } from "@clerk/react";
+import { commit, flushCloud, get, importFiles, openProject, patchProject, player, redo, resume, seek, set, undo, useEditor, type Tool, type Workspace } from "../lib/store";
 import { pending } from "./NewProject";
-import { accessCode, api } from "../lib/api";
+import { auth } from "../lib/api";
 import { Icon, Mark } from "./Icons";
 import { Splitter, useSize, tc } from "./controls";
 import { ProgramMonitor } from "./ProgramMonitor";
@@ -47,6 +48,19 @@ export function Editor({ id }: { id: string }) {
       .catch((e) => setError(e instanceof Error ? e.message : String(e)));
   }, [id]);
 
+  // Leaving the project or the page sends the last changes to the account right away.
+  useEffect(() => {
+    const leave = () => void flushCloud();
+    const hidden = () => document.visibilityState === "hidden" && leave();
+    window.addEventListener("pagehide", leave);
+    document.addEventListener("visibilitychange", hidden);
+    return () => {
+      window.removeEventListener("pagehide", leave);
+      document.removeEventListener("visibilitychange", hidden);
+      leave();
+    };
+  }, [id]);
+
   useShortcuts(setMode, () => setHelp(true));
 
   if (error) {
@@ -82,11 +96,15 @@ export function Editor({ id }: { id: string }) {
         <ProjectName />
         {mode === "edit" && <WorkspaceTabs />}
         <SaveState />
+        {auth.enabled && (
+          <span className="header-user">
+            <UserButton />
+          </span>
+        )}
       </header>
       {mode === "edit" ? <EditMode /> : <ExportView onBack={() => setMode("edit")} />}
       <StatusBar />
       {help && <Shortcuts onClose={() => setHelp(false)} />}
-      <AccessGate />
     </div>
   );
 }
@@ -132,7 +150,16 @@ function WorkspaceTabs() {
 
 function SaveState() {
   const saving = useEditor((s) => s.saving);
-  return <span className="save-state">{saving ? "Saving…" : "Saved in this browser"}</span>;
+  const synced = useEditor((s) => s.synced);
+  const uploading = useEditor((s) => s.tasks.some((t) => t.label.startsWith("Uploading")));
+  if (synced === "off") return <span className="save-state">{saving ? "Saving…" : "Saved in this browser"}</span>;
+  if (synced === "error")
+    return (
+      <button type="button" className="save-state warn" title="Saved in this browser. Click to try the account again." onClick={() => (set({ synced: "pending" }), void flushCloud())}>
+        Not synced · retry
+      </button>
+    );
+  return <span className="save-state">{saving || synced === "pending" ? "Saving…" : uploading ? "Saved · uploading media" : "Saved to your account"}</span>;
 }
 
 function EditMode() {
@@ -249,7 +276,7 @@ function StatusBar() {
           {src ? `${tc(src)} raw → ${tc(timeline.durationInFrames / FPS)} edit · ${timeline.clips.length} clips · ${project.items.length} layers` : "No media"}
         </span>
       )}
-      {notice && notice !== "access" && (
+      {notice && (
         <span className="notice">
           {notice}
           <button type="button" className="icon-btn sm" aria-label="Dismiss" onClick={() => set({ notice: null })}>
@@ -505,37 +532,3 @@ function Shortcuts({ onClose }: { onClose: () => void }) {
   );
 }
 
-// When the server has an access code, ask for it once and keep it in this browser.
-function AccessGate() {
-  const notice = useEditor((s) => s.notice);
-  const [need, setNeed] = useState(false);
-  const [code, setCode] = useState("");
-  useEffect(() => {
-    void api.health().then((h) => setNeed(h.accessCode && !accessCode.get()));
-  }, []);
-  if (!need && notice !== "access") return null;
-  return (
-    <div className="modal-back">
-      <form
-        className="modal"
-        onSubmit={(e) => {
-          e.preventDefault();
-          accessCode.set(code.trim());
-          setNeed(false);
-          set({ notice: null });
-        }}
-      >
-        <header>
-          <h2>Access code</h2>
-        </header>
-        <p className="fine pad">This editor is private. Enter the access code you were given to use transcription and the AI.</p>
-        <input className="text-in" autoFocus value={code} onChange={(e) => setCode(e.target.value)} aria-label="Access code" onKeyDown={(e) => e.stopPropagation()} />
-        <div className="modal-actions">
-          <button type="submit" className="btn btn-blue" disabled={!code.trim()}>
-            Continue
-          </button>
-        </div>
-      </form>
-    </div>
-  );
-}

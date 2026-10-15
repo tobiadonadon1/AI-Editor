@@ -2,12 +2,16 @@ import path from "node:path";
 import { defineConfig, loadEnv, type Plugin, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
 
+const noAuth = Boolean(process.env.NO_AUTH);
+
 // In development the same files Vercel deploys as functions (api/*.ts) answer /api/* here.
 function localApi(): Plugin {
   return {
     name: "local-api",
     configureServer(server: ViteDevServer) {
       Object.assign(process.env, loadEnv("development", process.cwd(), ""));
+      // NO_AUTH=1 npm run dev: no accounts, everything saved as the user "local" (for testing the cloud sync).
+      if (noAuth) delete process.env.CLERK_SECRET_KEY;
       server.middlewares.use(async (req, res, next) => {
         const match = req.url?.match(/^\/api\/([a-z-]+)/);
         if (!match) return next();
@@ -43,6 +47,9 @@ function localApi(): Plugin {
 
 export default defineConfig({
   root: "web",
+  // .env files sit at the repo root; only the Clerk publishable key (Vercel provisions it as NEXT_PUBLIC_*) reaches the browser.
+  envDir: process.cwd(),
+  envPrefix: noAuth ? ["VITE_"] : ["VITE_", "NEXT_PUBLIC_CLERK_"],
   plugins: [react(), localApi()],
   build: { outDir: "dist", emptyOutDir: true, chunkSizeWarningLimit: 4000 },
   server: { port: 5173 },

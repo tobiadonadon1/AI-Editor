@@ -1,4 +1,4 @@
-import { checkAccess, json } from "./_lib/server.js";
+import { authorize, json } from "./_lib/server.js";
 
 interface ScribeWord {
   text: string;
@@ -10,8 +10,8 @@ interface ScribeWord {
 // One chunk of 16 kHz mono WAV from the browser -> ElevenLabs Scribe v2, verbatim, word timings.
 // The browser sends chunks under Vercel's 4.5 MB request limit and offsets the times itself.
 export async function POST(req: Request) {
-  const denied = checkAccess(req);
-  if (denied) return denied;
+  const user = await authorize(req);
+  if (user instanceof Response) return user;
   const key = process.env.ELEVENLABS_API_KEY;
   if (!key) return json({ error: "Transcription is off: ELEVENLABS_API_KEY is not set on the server.", code: "key" }, 503);
 

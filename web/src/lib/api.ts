@@ -1,23 +1,16 @@
 import type { Op } from "../../../src/shared/ops";
 import type { Word } from "../../../src/shared/project";
 
-const CODE_KEY = "ai-editor:access-code";
-export const accessCode = {
-  get: () => {
-    try {
-      return localStorage.getItem(CODE_KEY) ?? "";
-    } catch {
-      return "";
-    }
-  },
-  set: (v: string) => {
-    try {
-      localStorage.setItem(CODE_KEY, v);
-    } catch {
-      /* private mode */
-    }
-  },
-};
+import { getToken } from "@clerk/react";
+
+// Set once at startup: with Clerk configured every call carries the session token.
+export const auth = { enabled: false };
+
+export async function authHeaders(): Promise<Record<string, string>> {
+  if (!auth.enabled) return {};
+  const token = await getToken().catch(() => null);
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
 
 export class ApiError extends Error {
   constructor(
@@ -28,8 +21,9 @@ export class ApiError extends Error {
   }
 }
 
-async function call<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const res = await fetch(path, { ...init, headers: { ...(init.headers ?? {}), "x-access-code": accessCode.get() } }).catch(() => {
+export async function call<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const res = await fetch(path, { ...init, headers: { ...(init.headers ?? {}), ...(await authHeaders()) } }).catch((e) => {
+    if (e instanceof DOMException && e.name === "AbortError") throw e;
     throw new ApiError("Could not reach the server. Check the connection and try again.");
   });
   const body = (await res.json().catch(() => ({}))) as { error?: string; code?: string };
@@ -40,13 +34,14 @@ async function call<T>(path: string, init: RequestInit = {}): Promise<T> {
 export interface Health {
   anthropic: boolean;
   elevenlabs: boolean;
-  accessCode: boolean;
+  auth: boolean;
+  storage: boolean;
 }
 
 let health: Promise<Health> | null = null;
 export const api = {
   health: (fresh = false) => {
-    if (fresh || !health) health = call<Health>("/api/health").catch(() => ({ anthropic: false, elevenlabs: false, accessCode: false }));
+    if (fresh || !health) health = call<Health>("/api/health").catch(() => ({ anthropic: false, elevenlabs: false, auth: false, storage: false }));
     return health;
   },
   transcribeChunk: (blob: Blob) =>
