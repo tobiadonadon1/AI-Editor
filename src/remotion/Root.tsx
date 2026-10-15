@@ -1,41 +1,30 @@
 import { Composition, type CalculateMetadataFunction } from "remotion";
 import { EditVideo } from "./EditVideo";
-import { FPS, HEIGHT, WIDTH, emptyEdit, type EditVideoProps } from "../shared/project";
+import { FORMATS, FPS, mainAsset, newProject, type EditVideoProps } from "../shared/project";
 import { buildTimeline } from "../shared/timeline";
 
+// Size and length come from the project, so one composition fits every format.
 export const calculateEditMetadata: CalculateMetadataFunction<EditVideoProps> = ({ props }) => {
   const { project } = props;
-  const timeline = buildTimeline(project.words, project.edit, project.source?.durationSec ?? 1, FPS);
+  const timeline = buildTimeline(project, mainAsset(project)?.durationSec ?? 0, FPS);
+  const f = FORMATS[project.format];
   return {
     durationInFrames: timeline.durationInFrames,
+    width: f.width,
+    height: f.height,
     defaultOutName: `${project.name || project.id}.mp4`,
   };
 };
 
-const now = new Date(0).toISOString();
-const placeholder: EditVideoProps = {
-  videoSrc: "",
-  project: {
-    version: 1,
-    id: "preview",
-    name: "Preview",
-    createdAt: now,
-    updatedAt: now,
-    brief: "",
-    status: "draft",
-    words: [],
-    edit: emptyEdit(),
-    render: { status: "idle", progress: 0 },
-  },
-};
+const placeholder: EditVideoProps = { project: newProject("preview", "Preview", "", "9:16"), media: {}, sfx: {} };
 
 export const RemotionRoot: React.FC = () => (
   <Composition
     id="Edit"
     component={EditVideo}
     fps={FPS}
-    width={WIDTH}
-    height={HEIGHT}
+    width={1080}
+    height={1920}
     durationInFrames={30}
     defaultProps={placeholder}
     calculateMetadata={calculateEditMetadata}

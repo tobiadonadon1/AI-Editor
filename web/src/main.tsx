@@ -1,10 +1,13 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
-import "@fontsource/courier-prime/400.css";
-import "@fontsource/courier-prime/700.css";
-import "@fontsource-variable/hanken-grotesk";
+import "@fontsource/source-sans-3/400.css";
+import "@fontsource/source-sans-3/600.css";
+import "@fontsource/source-sans-3/700.css";
 import { App } from "./App";
+import { persist } from "./lib/db";
 import "./styles.css";
+
+void persist();
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

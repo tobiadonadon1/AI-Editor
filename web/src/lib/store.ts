@@ -1,0 +1,483 @@
+import { useSyncExternalStore } from "react";
+import type { PlayerRef } from "@remotion/player";
+import { FPS, mainAsset, newProject, uid, type ChatMessage, type FormatId, type Item, type MediaAsset, type Project, type SfxId, type Word } from "../../../src/shared/project";
+import { applyOps, describeForAI, type Op } from "../../../src/shared/ops";
+import { buildTimeline, durationSec, placeItems, type Timeline } from "../../../src/shared/timeline";
+import { store as db } from "./db";
+import { frames, imageThumb, kindOf, makeProxy, monoAudio, needsProxy, peaks, probe, wavChunks } from "./media";
+import { api, ApiError } from "./api";
+import { sfxLibrary } from "./sfx";
+
+export type Tool = "select" | "razor" | "type" | "hand";
+export type Workspace = "editing" | "color" | "graphics" | "captions" | "audio";
+
+export interface Task {
+  id: string;
+  label: string;
+  progress: number | null; // null = indeterminate
+}
+
+export interface EditorState {
+  project: Project | null;
+  timeline: Timeline | null;
+  past: Project[];
+  future: Project[];
+  media: Record<string, string>; // asset id -> object URL (proxy if there is one)
+  originals: Record<string, Blob>;
+  thumbs: Record<string, { every: number; frames: string[] }>;
+  waves: Record<string, number[]>; // 60 peaks per second
+  sfx: Record<string, string>;
+  frame: number;
+  playing: boolean;
+  selectedItem: string | null;
+  selectedClip: number | null;
+  wordSel: { anchor: number; focus: number } | null;
+  tool: Tool;
+  workspace: Workspace;
+  pxPerSec: number;
+  tasks: Task[];
+  assistantBusy: boolean;
+  notice: string | null;
+  saving: boolean;
+}
+
+const initial: EditorState = {
+  project: null,
+  timeline: null,
+  past: [],
+  future: [],
+  media: {},
+  originals: {},
+  thumbs: {},
+  waves: {},
+  sfx: {},
+  frame: 0,
+  playing: false,
+  selectedItem: null,
+  selectedClip: null,
+  wordSel: null,
+  tool: "select",
+  workspace: "editing",
+  pxPerSec: 60,
+  tasks: [],
+  assistantBusy: false,
+  notice: null,
+  saving: false,
+};
+
+let state: EditorState = initial;
+const listeners = new Set<() => void>();
+const emit = () => listeners.forEach((l) => l());
+
+export function set(patch: Partial<EditorState> | ((s: EditorState) => Partial<EditorState>)) {
+  state = { ...state, ...(typeof patch === "function" ? patch(state) : patch) };
+  emit();
+}
+export const get = () => state;
+
+export function useEditor<T>(select: (s: EditorState) => T): T {
+  return useSyncExternalStore(
+    (l) => {
+      listeners.add(l);
+      return () => listeners.delete(l);
+    },
+    () => select(state),
+  );
+}
+
+export const player: { current: PlayerRef | null } = { current: null };
+
+const timelineOf = (p: Project) => buildTimeline(p, mainAsset(p)?.durationSec ?? 0, FPS);
+
+// ---------- saving ----------
+
+let saveTimer: number | undefined;
+function scheduleSave() {
+  window.clearTimeout(saveTimer);
+  set({ saving: true });
+  saveTimer = window.setTimeout(async () => {
+    const p = state.project;
+    if (p) await db.putProject(p).catch(() => set({ notice: "Could not save to this browser's storage." }));
+    set({ saving: false });
+  }, 400);
+}
+
+// Status and chat updates: saved, but not part of undo.
+export function setProject(next: Project) {
+  next.updatedAt = new Date().toISOString();
+  set({ project: next, timeline: timelineOf(next) });
+  scheduleSave();
+}
+
+// Every edit goes through here: a new snapshot, undo history and a save.
+// Changes with the same mergeKey in quick succession (a slider drag) are one undo step.
+let lastMerge: { key: string; at: number } | null = null;
+export function commit(change: (draft: Project) => void, mergeKey?: string) {
+  const cur = state.project;
+  if (!cur) return;
+  const draft = structuredClone(cur);
+  change(draft);
+  const now = performance.now();
+  const merge = mergeKey && lastMerge && lastMerge.key === mergeKey && now - lastMerge.at < 900;
+  lastMerge = mergeKey ? { key: mergeKey, at: now } : null;
+  if (!merge) set({ past: [...state.past.slice(-149), cur], future: [] });
+  setProject(draft);
+}
+
+// Drags update live and land in undo history as one step.
+export function beginGesture() {
+  const before = state.project;
+  return {
+    update: (change: (draft: Project) => void) => {
+      const cur = state.project;
+      if (!cur) return;
+      const draft = structuredClone(cur);
+      change(draft);
+      setProject(draft);
+    },
+    end: () => {
+      if (before && state.project !== before) set({ past: [...state.past.slice(-149), before], future: [] });
+    },
+  };
+}
+
+const keepLive =(snapshot: Project, live: Project): Project => ({ ...snapshot, chat: live.chat, status: live.status, statusDetail: live.statusDetail, error: live.error, assets: live.assets });
+
+export function undo() {
+  const { past, project } = state;
+  if (!past.length || !project) return;
+  const prev = keepLive(past[past.length - 1], project);
+  set({ past: past.slice(0, -1), future: [project, ...state.future] });
+  setProject(prev);
+}
+
+export function redo() {
+  const { future, project } = state;
+  if (!future.length || !project) return;
+  const next = keepLive(future[0], project);
+  set({ future: future.slice(1), past: [...state.past, project] });
+  setProject(next);
+}
+
+// ---------- playback ----------
+
+export const playheadSec = () => state.frame / FPS;
+
+export function seek(sec: number) {
+  const t = state.timeline;
+  if (!t) return;
+  const f = Math.max(0, Math.min(t.durationInFrames - 1, Math.round(sec * FPS)));
+  player.current?.seekTo(f);
+  set({ frame: f });
+}
+
+// ---------- loading ----------
+
+async function urlFor(asset: MediaAsset): Promise<string | null> {
+  const blob = (asset.proxy && (await db.getMedia(`${asset.id}:proxy`))) || (await db.getMedia(asset.id));
+  return blob ? URL.createObjectURL(blob) : null;
+}
+
+export async function openProject(id: string) {
+  Object.values(state.media).forEach((u) => URL.revokeObjectURL(u));
+  const project = await db.getProject(id);
+  if (!project) throw new Error("This project is not in this browser. Projects are stored on the device where they were made.");
+  state = { ...initial, workspace: state.workspace, pxPerSec: state.pxPerSec };
+  set({ project, timeline: timelineOf(project) });
+  void sfxLibrary().then((sfx) => set({ sfx }));
+  const media: Record<string, string> = {};
+  for (const a of project.assets) {
+    const url = await urlFor(a);
+    if (url) media[a.id] = url;
+  }
+  set({ media });
+  for (const a of project.assets) void loadVisuals(a);
+  // A tab closed mid-import leaves the project half-done: resume where it stopped.
+  if (project.status === "transcribing" || project.status === "planning" || project.status === "importing") void resume();
+}
+
+async function loadVisuals(a: MediaAsset) {
+  const cached = await db.getMedia(`${a.id}:visuals`);
+  if (cached) {
+    const v = JSON.parse(await cached.text()) as { thumbs?: EditorState["thumbs"][string]; wave?: number[] };
+    set((s) => ({ thumbs: v.thumbs ? { ...s.thumbs, [a.id]: v.thumbs } : s.thumbs, waves: v.wave ? { ...s.waves, [a.id]: v.wave } : s.waves }));
+    return;
+  }
+  const blob = (await db.getMedia(a.id)) ?? null;
+  if (!blob) return;
+  const out: { thumbs?: EditorState["thumbs"][string]; wave?: number[] } = {};
+  try {
+    if (a.kind === "video") {
+      const every = Math.max(0.5, a.durationSec / 120);
+      const times = Array.from({ length: Math.max(1, Math.ceil(a.durationSec / every)) }, (_, i) => i * every);
+      out.thumbs = { every, frames: await frames((await db.getMedia(`${a.id}:proxy`)) ?? blob, times, 64, 0.6) };
+    } else if (a.kind === "image") out.thumbs = { every: 1e9, frames: [await imageThumb(blob, 64)] };
+    if (a.kind !== "image" && a.hasAudio) {
+      const mono = await monoAudio(blob, 8000);
+      if (mono) out.wave = peaks(mono, 8000, 60);
+    }
+  } catch (e) {
+    console.warn("visuals", e);
+  }
+  set((s) => ({ thumbs: out.thumbs ? { ...s.thumbs, [a.id]: out.thumbs } : s.thumbs, waves: out.wave ? { ...s.waves, [a.id]: out.wave } : s.waves }));
+  await db.putMedia(`${a.id}:visuals`, new Blob([JSON.stringify(out)], { type: "application/json" }));
+}
+
+// ---------- tasks ----------
+
+function task(label: string) {
+  const t: Task = { id: uid("task"), label, progress: null };
+  set((s) => ({ tasks: [...s.tasks, t] }));
+  return {
+    progress: (p: number | null, l?: string) => set((s) => ({ tasks: s.tasks.map((x) => (x.id === t.id ? { ...x, progress: p, label: l ?? x.label } : x)) })),
+    done: () => set((s) => ({ tasks: s.tasks.filter((x) => x.id !== t.id) })),
+  };
+}
+
+const status = (patch: Partial<Project>) => {
+  if (state.project) setProject({ ...state.project, ...patch });
+};
+export const patchProject = status;
+
+// ---------- importing ----------
+
+export async function importFiles(files: File[], opts: { asMain?: boolean } = {}): Promise<MediaAsset[]> {
+  const added: MediaAsset[] = [];
+  for (const file of files) {
+    const kind = kindOf(file);
+    if (!kind) {
+      set({ notice: `${file.name} is not a video, image or audio file.` });
+      continue;
+    }
+    const t = task(`Importing ${file.name}`);
+    try {
+      const info = await probe(file, kind);
+      const asset: MediaAsset = { id: uid("m"), name: file.name.replace(/\.[^.]+$/, ""), kind, durationSec: info.durationSec, width: info.width, height: info.height, hasAudio: info.hasAudio, size: file.size };
+      await db.putMedia(asset.id, file);
+      let url = URL.createObjectURL(file);
+      if (kind === "video" && needsProxy(info)) {
+        t.progress(0, `Creating proxy for ${file.name}`);
+        try {
+          const proxy = await makeProxy(file, info, (v) => t.progress(v));
+          await db.putMedia(`${asset.id}:proxy`, proxy);
+          URL.revokeObjectURL(url);
+          url = URL.createObjectURL(proxy);
+          asset.proxy = true;
+          const p2 = await probe(proxy, "video");
+          asset.width = p2.width;
+          asset.height = p2.height;
+        } catch (e) {
+          console.warn("proxy failed, editing the original", e);
+        }
+      }
+      set((s) => ({ media: { ...s.media, [asset.id]: url } }));
+      const cur = state.project!;
+      const isMain = (opts.asMain || !cur.mainAssetId) && kind === "video";
+      setProject({ ...cur, assets: [...cur.assets, asset], mainAssetId: isMain ? asset.id : cur.mainAssetId });
+      void loadVisuals(asset);
+      added.push(asset);
+    } catch (e) {
+      set({ notice: e instanceof Error ? e.message : String(e) });
+    } finally {
+      t.done();
+    }
+  }
+  return added;
+}
+
+// ---------- transcription + first cut ----------
+
+export async function transcribeMain() {
+  const p = state.project!;
+  const asset = mainAsset(p);
+  if (!asset) return;
+  const health = await api.health();
+  if (!health.elevenlabs) {
+    status({ status: "ready", statusDetail: undefined, error: undefined });
+    set({ notice: "Transcription is not set up on this server (ELEVENLABS_API_KEY), so the video was imported without a transcript. You can still edit, color, add text and export." });
+    return false;
+  }
+  status({ status: "transcribing", statusDetail: "Transcribing speech", error: undefined });
+  const t = task("Transcribing");
+  try {
+    const blob = (await db.getMedia(asset.id))!;
+    const mono = await monoAudio(blob, 16000);
+    if (!mono) {
+      status({ words: [], status: "ready", statusDetail: undefined });
+      return false;
+    }
+    const chunks = wavChunks(mono, 16000);
+    const words: Word[] = [];
+    let language: string | undefined;
+    for (let i = 0; i < chunks.length; i++) {
+      t.progress(i / chunks.length, `Transcribing ${chunks.length > 1 ? `part ${i + 1} of ${chunks.length}` : ""}`.trim());
+      const res = await api.transcribeChunk(chunks[i].blob);
+      language ??= res.language;
+      for (const w of res.words) words.push({ ...w, id: `w${words.length}`, start: w.start + chunks[i].offsetSec, end: w.end + chunks[i].offsetSec });
+    }
+    status({ words, language });
+    return true;
+  } catch (e) {
+    status({ status: "error", error: e instanceof Error ? e.message : String(e) });
+    throw e;
+  } finally {
+    t.done();
+  }
+}
+
+// Stills from the raw footage so the AI can see light, colour and framing.
+async function aiFrames(): Promise<string[]> {
+  const p = state.project;
+  const asset = p && mainAsset(p);
+  if (!asset) return [];
+  const blob = (asset.proxy && (await db.getMedia(`${asset.id}:proxy`))) || (await db.getMedia(asset.id));
+  if (!blob) return [];
+  const d = asset.durationSec;
+  const shots = await frames(blob, [d * 0.15, d * 0.5, d * 0.85], 448, 0.72).catch(() => []);
+  return shots.filter(Boolean).map((s) => s.split(",")[1]);
+}
+
+const snapshots = new Map<string, Project>();
+
+function pushChat(m: ChatMessage) {
+  const p = state.project!;
+  setProject({ ...p, chat: [...p.chat, m] });
+}
+function patchChat(id: string, patch: Partial<ChatMessage>) {
+  const p = state.project!;
+  setProject({ ...p, chat: p.chat.map((m) => (m.id === id ? { ...m, ...patch } : m)) });
+}
+
+let aborter: AbortController | null = null;
+export const cancelAssistant = () => aborter?.abort();
+
+export async function ask(prompt: string, mode: "first_cut" | "edit" = "edit") {
+  const p = state.project;
+  if (!p || state.assistantBusy) return;
+  const health = await api.health();
+  if (!health.anthropic) {
+    set({ notice: "The AI is not set up on this server yet: add ANTHROPIC_API_KEY in the Vercel project settings (or .env locally)." });
+    return;
+  }
+  const history = p.chat.filter((m) => !m.pending && !m.error).slice(-10).map((m) => ({ role: m.role, text: m.text }));
+  if (mode === "edit") pushChat({ id: uid("c"), role: "user", text: prompt, at: new Date().toISOString() });
+  const reply: ChatMessage = { id: uid("c"), role: "assistant", text: mode === "first_cut" ? "Reading the transcript and making the first cut…" : "Working on it…", at: new Date().toISOString(), pending: true };
+  pushChat(reply);
+  set({ assistantBusy: true });
+  aborter = new AbortController();
+  const ctx = { playhead: playheadSec(), selectedItemId: state.selectedItem };
+  try {
+    const res = await api.assistant({ mode, prompt, state: describeForAI(state.project!, ctx), frames: await aiFrames(), history }, aborter.signal);
+    const before = state.project!;
+    const { project: next, notes, errors } = applyOps(before, res.ops as Op[], ctx);
+    if (errors.length) console.warn("AI operations skipped:", errors);
+    if (notes.length) {
+      snapshots.set(reply.id, before);
+      set({ past: [...state.past.slice(-149), before], future: [] });
+    }
+    setProject({ ...next, chat: before.chat.map((m) => (m.id === reply.id ? { ...m, text: res.message, pending: false, changes: notes, undoable: notes.length > 0 } : m)) });
+    if (mode === "first_cut") status({ status: "ready", statusDetail: undefined, summary: res.message });
+  } catch (e) {
+    const aborted = e instanceof DOMException && e.name === "AbortError";
+    patchChat(reply.id, { pending: false, error: !aborted, text: aborted ? "Stopped." : e instanceof Error ? e.message : String(e) });
+    if (mode === "first_cut") status({ status: "ready", statusDetail: undefined });
+    if (e instanceof ApiError && e.code === "access") set({ notice: "access" });
+  } finally {
+    set({ assistantBusy: false });
+    aborter = null;
+  }
+}
+
+export function revertMessage(id: string) {
+  const snap = snapshots.get(id);
+  if (!snap || !state.project) return;
+  commit((d) => Object.assign(d, keepLive(snap, d)));
+  patchChat(id, { undoable: false, text: `${state.project.chat.find((m) => m.id === id)?.text ?? ""}` });
+  snapshots.delete(id);
+}
+export const canRevert = (id: string) => snapshots.has(id);
+
+// Import -> transcribe -> AI first cut, resumable.
+export async function resume() {
+  const p = state.project;
+  if (!p?.mainAssetId) return;
+  try {
+    if (!p.words.length) {
+      const ok = await transcribeMain();
+      if (!ok) return;
+    }
+    status({ status: "planning", statusDetail: "AI first cut" });
+    await ask(state.project!.brief, "first_cut");
+  } catch {
+    /* status already shows the error */
+  }
+}
+
+// ---------- creating ----------
+
+export async function createProject(opts: { name: string; brief: string; format: FormatId; files: File[] }) {
+  const p = newProject(uid("p"), opts.name, opts.brief, opts.format);
+  p.status = "importing";
+  p.statusDetail = "Importing media";
+  await db.putProject(p);
+  return p;
+}
+
+// A ready-made sample so a tester can try everything without uploading.
+export async function createSample(format: FormatId = "9:16") {
+  const p = newProject(uid("p"), "Sample: three ways to edit faster", "Punchy edit for Reels. Cut the mistakes and repeats, add a hook title, bold captions with key words, a couple of punch-in zooms and a warm, clean look.", format);
+  const [video, words] = await Promise.all([fetch("/sample/talking.mp4").then((r) => r.blob()), fetch("/sample/talking.words.json").then((r) => r.json() as Promise<{ text: string; start: number; end: number }[]>)]);
+  const file = new File([video], "talking.mp4", { type: "video/mp4" });
+  const info = await probe(file, "video");
+  const asset: MediaAsset = { id: uid("m"), name: "talking", kind: "video", durationSec: info.durationSec, width: info.width, height: info.height, hasAudio: info.hasAudio, size: file.size };
+  await db.putMedia(asset.id, file);
+  p.assets = [asset];
+  p.mainAssetId = asset.id;
+  p.words = words.map((w, i) => ({ id: `w${i}`, ...w, kind: "word" as const }));
+  p.status = "ready";
+  // A pre-made edit built with the same operations the AI calls, so the sample works without API keys.
+  const ops: Op[] = [
+    { name: "cut_words", input: { from_word: "w0", to_word: "w5", reason: "retake" } },
+    { name: "cut_words", input: { from_word: "w23", to_word: "w23", reason: "filler" } },
+    { name: "cut_words", input: { from_word: "w44", to_word: "w46", reason: "retake" } },
+    { name: "set_pacing", input: { max_pause_sec: 0.25 } },
+    { name: "set_key_words", input: { add: ["w13", "w18", "w27", "w35", "w57"] } },
+    { name: "set_captions", input: { preset: "bold-pop", y: 74 } },
+    { name: "set_color", input: { temperature: 12, contrast: 14, vibrance: 18, look: "warm-film", look_intensity: 45, vignette: 18 } },
+    { name: "add_text", input: { text: "3 ways to edit *faster*", preset: "hook", start_word: "w6", duration_sec: 2.3, anim_in: "pop", sfx: "whoosh" } },
+    { name: "add_zoom", input: { start_word: "w6", duration_sec: 2.3, scale: 1.12, style: "push", focus_y: 40 } },
+    { name: "add_text", input: { text: "*01*", preset: "number", start_word: "w19", duration_sec: 1.3, position: "upper", sfx: "pop" } },
+    { name: "add_zoom", input: { start_word: "w25", end_word: "w28", scale: 1.2, style: "punch" } },
+    { name: "add_text", input: { text: "*02*", preset: "number", start_word: "w29", duration_sec: 1.3, position: "upper", sfx: "pop" } },
+    { name: "add_text", input: { text: "AI picks the *key words*", preset: "callout", start_word: "w36", duration_sec: 1.6, y: 30 } },
+    { name: "add_text", input: { text: "*03*", preset: "number", start_word: "w43", duration_sec: 1.3, position: "upper", sfx: "pop" } },
+    { name: "add_zoom", input: { start_word: "w52", end_word: "w57", scale: 1.25, style: "smooth" } },
+    { name: "add_transition", input: { kind: "whip", at_word: "w43", duration_sec: 0.3 } },
+    { name: "add_sfx", input: { sound: "whoosh", on: "transitions", volume_db: -8 } },
+    { name: "add_graphic", input: { shape: "progress", color: "#FFE14D", color2: "#FFFFFF" } },
+  ];
+  const { project: edited, notes } = applyOps(p, ops, { playhead: 0 });
+  edited.chat = [
+    {
+      id: uid("c"),
+      role: "assistant",
+      at: new Date().toISOString(),
+      text: "This sample was edited with the same operations the AI uses: the false start and the repeated take are cut, pauses are tightened, and it has a hook, numbered beats, punch-in zooms, captions with key words and a warm grade. Ask for any change below, or edit it by hand.",
+      changes: notes,
+    },
+  ];
+  await db.putProject(edited);
+  return edited;
+}
+
+// ---------- small helpers used by panels ----------
+
+export const selectedItem = (s: EditorState): Item | null => s.project?.items.find((i) => i.id === s.selectedItem) ?? null;
+
+export function placedNow(s: EditorState) {
+  if (!s.project || !s.timeline) return [];
+  return placeItems(s.project.items, s.timeline);
+}
+
+export const totalSec = (s: EditorState) => (s.timeline ? durationSec(s.timeline) : 0);
+export const sfxIds = (): SfxId[] => Object.keys(state.sfx) as SfxId[];

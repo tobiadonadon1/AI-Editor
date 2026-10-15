@@ -1,18 +1,26 @@
 import { useEffect, useState } from "react";
-import { Home } from "./Home";
-import { Editor } from "./Editor";
+import { Home } from "./ui/Home";
+import { NewProject } from "./ui/NewProject";
+import { Editor } from "./ui/Editor";
 
-const route = () => window.location.hash.match(/^#\/p\/([a-z0-9-]+)/)?.[1] ?? null;
+type Route = { page: "home" } | { page: "new" } | { page: "editor"; id: string };
+
+const parse = (): Route => {
+  const h = window.location.hash;
+  const m = h.match(/^#\/p\/([a-z0-9-]+)/i);
+  if (m) return { page: "editor", id: m[1] };
+  if (h.startsWith("#/new")) return { page: "new" };
+  return { page: "home" };
+};
 
 export function App() {
-  const [projectId, setProjectId] = useState(route);
+  const [route, setRoute] = useState(parse);
   useEffect(() => {
-    const onHash = () => setProjectId(route());
-    window.addEventListener("hashchange", onHash);
-    return () => window.removeEventListener("hashchange", onHash);
+    const on = () => setRoute(parse());
+    window.addEventListener("hashchange", on);
+    return () => window.removeEventListener("hashchange", on);
   }, []);
-  return projectId ? <Editor key={projectId} id={projectId} /> : <Home />;
+  if (route.page === "editor") return <Editor key={route.id} id={route.id} />;
+  if (route.page === "new") return <NewProject />;
+  return <Home />;
 }
-
-export const openProject = (id: string) => (window.location.hash = `#/p/${id}`);
-export const goHome = () => (window.location.hash = "#/");

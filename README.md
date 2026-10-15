@@ -1,59 +1,52 @@
 # AI Editor
 
-Upload a raw vertical talking-head video, describe the edit you want, and get a finished edit back: mistakes and retakes cut, pauses trimmed, animated captions with key words. Then change anything by hand and export an MP4.
+A professional video editor you can talk to. It looks and works like Premiere Pro (Program monitor, timeline with video and audio tracks, Effect Controls, Lumetri Color, Essential Graphics, text-based editing, Essential Sound, Export mode), and every panel can also be driven by an Assistant: describe the colour, the light, the titles, where they go, how they animate, the pacing, captions or format, and the change lands on the timeline as real layers you can adjust by hand or undo.
 
-## Run it
+## Use it
 
-1. Copy `.env.example` to `.env` and add your keys:
-   ```
-   ANTHROPIC_API_KEY=...
-   ELEVENLABS_API_KEY=...
-   ```
-2. Start the app:
-   ```sh
-   npm install
-   npm run dev
-   ```
-3. Open http://localhost:5173
+- **New project**: drop footage (plus optional B-roll images/clips and music), pick a format, describe the edit. The first video is transcribed and Claude makes the first cut: retakes and filler removed, pacing, captions with key words, colour, hook title, zooms, graphics, CTA.
+- **Edit**: by hand in the panels, or by typing (or dictating) to the Assistant. "Here" means the playhead, "this" means the selected layer.
+- **Export**: H.264 MP4 rendered in the browser with the same engine as the preview (9:16, 4:5, 1:1, 16:9).
+- **Open sample project** shows a finished edit and works without API keys.
 
-Requires Node 22+ and FFmpeg (`brew install ffmpeg`). The first export downloads a headless Chrome for rendering (~170 MB, once).
+Keyboard: Space play, J/K/L, ←/→ frame step, ↑/↓ edit points, V/C/T tools, ⌘K add edit, Delete ripple delete, ⌘D default transition, ⌘T new text, =/− zoom, \ fit, / ask the Assistant, ⌘Z undo, ⌘M export, ? all shortcuts.
 
-To try the editor without API keys: `npx tsx scripts/seed-sample.ts` creates a ready sample project from `samples/`.
+## Run locally
+
+```sh
+npm install
+cp .env.example .env   # add ANTHROPIC_API_KEY and ELEVENLABS_API_KEY
+npm run dev            # http://localhost:5173
+```
+
+`npm test` runs the edit-engine tests, `npm run typecheck` the type checker.
+
+## Deploy (Vercel)
+
+Pushing to `main` deploys. `vercel.json` builds the Vite app to `web/dist` and deploys `api/*.ts` as functions. Set these in the Vercel project (Settings → Environment Variables):
+
+| Variable | Needed for |
+|---|---|
+| `ANTHROPIC_API_KEY` | The Assistant and the AI first cut (Claude Opus 5.5) |
+| `ELEVENLABS_API_KEY` | Transcription (Scribe v2, word timings) |
+| `APP_ACCESS_CODE` | Optional but recommended for a shared link: testers enter it once, so the public URL cannot spend your API credits |
 
 ## How it works
 
 ```
-video + brief
-  1. Prepare     FFmpeg makes an editing copy (1080x1920, 30fps) and a small audio file
-  2. Transcribe  ElevenLabs Scribe v2, word timings, verbatim (keeps "um", false starts)
-  3. Plan        Claude Opus 5.5 reads the transcript + brief and returns which words to cut and why,
-                 plus key words for captions (structured JSON)
-  4. Timeline    Kept words become clips; long pauses are trimmed; every word is re-timed
-                 onto the shorter output timeline (src/shared/timeline.ts)
-  5. Preview     Remotion Player in the browser
-  6. Export      Remotion renders the same composition to MP4
+browser                                         server (Vercel functions)
+  media in IndexedDB, proxies via WebCodecs
+  audio -> 16 kHz WAV chunks  ───────────────►  api/transcribe  -> ElevenLabs Scribe v2
+  project state as text + 3 stills  ─────────►  api/assistant   -> Claude Opus 5.5 with editing tools
+  tool calls applied to the project  ◄────────  (cut_words, set_color, add_text, add_zoom, ...)
+  Remotion Player preview = Remotion web renderer export
 ```
 
-The project file (`storage/projects/<id>/project.json`) is the single source of truth. The AI writes it, the editor changes it, and the preview and export both render it, so what you see is what you export.
+- `src/shared/project.ts`: the project file, the single source of truth.
+- `src/shared/ops.ts`: the editing operations Claude can call, and `applyOps`, which the editor uses to apply them. The AI can only do what the editor can show.
+- `src/shared/timeline.ts`: word cuts, razor splits and ripple deletes become clips; layers anchored to words follow them through later cuts.
+- `src/remotion/`: the composition (clips, Lumetri-style grade via `@remotion/effects`, adjustment layers, camera moves, transitions, text and graphics with animations, captions, music with ducking, synthesised SFX).
+- `web/src/ui/`: the Premiere-style interface.
+- `api/`: the two functions and the system prompt (`api/_lib/prompt.ts`).
 
-## Editing
-
-- **Transcript tab**: click a word to jump to it. Shift-click or drag to select. `Delete` cuts, `R` restores, `K` toggles a key word, `Space` plays, `⌘Z` undoes.
-- **AI edit tab**: see what the AI did, change the brief and re-edit. Your own cuts are kept.
-- **Captions tab**: position, words on screen, colours, uppercase, pause trimming.
-
-## Design
-
-The interface is an actor's script, marked up: Courier pages on a graphite desk, pencil strikes for cuts with the reason in the margin, fluorescent pink for the words that matter (the same pink becomes the highlighted caption word). Direction, tokens, logo research and content are in `DIRECTION.md`; the critique rounds are in `CRITIQUE.md`. Every editor state opens by URL for review, e.g. `#/p/<id>?state=error` (also `processing`, `exporting`, `exported`, `captions`, `playing`, `selected`); nothing is saved in those views.
-
-## Layout
-
-- `src/shared/` project format and timeline logic (used by server, preview and renderer)
-- `src/remotion/` the video composition: cut clips + captions
-- `src/server/` local API, FFmpeg, transcription, Claude planner, rendering
-- `web/` editor UI (React + Vite)
-- `storage/` projects and media (not committed)
-
-`npm test` runs the unit tests, `npm run typecheck` the type checker, `npm run studio` opens Remotion Studio.
-
-Remotion is free for individuals and companies of up to 3 people; larger companies need a Remotion company license.
+Media never leaves the user's machine; projects are stored per browser. Remotion is free for individuals and companies of up to 3 people; larger companies need a Remotion company license.

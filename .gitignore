@@ -11,3 +11,5 @@ data/
 work/
 design/
 __pycache__/
+.vercel
+.env*

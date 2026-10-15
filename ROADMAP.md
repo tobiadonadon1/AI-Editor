@@ -1,11 +1,12 @@
 # Roadmap
 
-Goal: an AI editor. Raw video + brief in, finished styled edit out, with full manual control.
+Done in v3: Premiere-style editor, Assistant with 20 editing tools, AI first cut, Lumetri colour with looks, adjustment layers, camera moves, transitions, text templates with animations, graphics, B-roll, music with ducking, synthesised SFX, captions presets, four formats, in-browser export.
 
-1. **Auto cut + captions** ✅ transcript, AI cuts (retakes, false starts, filler), pause trimming, animated captions, transcript editing, export.
-2. **Motion graphics**: a template library (titles, keyword pop-ups, lists, numbers, callouts, lower thirds). The AI picks moments and fills templates; the user edits text and timing.
-3. **Sound**: whoosh/pop SFX on cuts and graphics, a music bed that ducks under speech, loudness normalisation.
-4. **Look**: auto exposure and white balance, punch-in zooms on emphasis, a colour "look" per style.
-5. **Styles**: one-click presets bundling fonts, colours, captions, graphics, sounds and pacing.
-6. **Chat edits**: "make the intro faster", "add a title at the start" as patches to the project file.
-7. **Advanced**: custom AI-written animations, learning a style from a reference video, export to DaVinci/Premiere.
+Next:
+1. Keyframes in Effect Controls (position, scale, opacity over time) and a keyframe lane in the timeline.
+2. Multi-clip editing on V1 (several takes, reorder by drag) and multicam.
+3. Auto-reframe that tracks the face when switching formats.
+4. Brand kits: fonts, colours, logo, intro/outro, applied by the AI.
+5. Cloud projects and share links (today projects live in one browser).
+6. AI B-roll suggestions and stock search; licensed music library.
+7. Learning a style from a reference video.
