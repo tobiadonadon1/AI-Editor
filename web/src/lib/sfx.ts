@@ -48,16 +48,30 @@ function tone(ctx: OfflineAudioContext, type: OscillatorType, at: number, f: [nu
 }
 
 const SOUNDS: Record<SfxId, { sec: number; build: Build }> = {
-  whoosh: { sec: 0.7, build: (c) => noise(c, 0.7, "bandpass", [[0, 300], [0.28, 2600], [0.6, 600]], 1.4, [[0, 0], [0.22, 0.9], [0.62, 0]]) },
+  whoosh: { sec: 0.7, build: (c) => noise(c, 0.7, "bandpass", [[0, 300], [0.28, 1800], [0.6, 500]], 0.9, [[0, 0], [0.24, 0.55], [0.62, 0]]) },
   "swoosh-up": { sec: 0.8, build: (c) => noise(c, 0.8, "bandpass", [[0, 220], [0.7, 7000]], 2, [[0, 0], [0.55, 0.8], [0.78, 0]]) },
+  // A soft bubble pop: a quick upward blip that dies away in under 0.1 s, rounded off with a low-pass.
   pop: {
-    sec: 0.25,
+    sec: 0.18,
     build: (c) => {
-      tone(c, "sine", 0, [[0, 820], [0.11, 180]], [[0, 0.9], [0.14, 0]]);
-      noise(c, 0.04, "highpass", [[0, 3000]], 0.7, [[0, 0.3], [0.03, 0]]);
+      const o = c.createOscillator();
+      o.type = "sine";
+      o.frequency.setValueAtTime(380, 0);
+      o.frequency.exponentialRampToValueAtTime(1100, 0.035);
+      o.frequency.exponentialRampToValueAtTime(900, 0.1);
+      const lp = c.createBiquadFilter();
+      lp.type = "lowpass";
+      lp.frequency.value = 2200;
+      const g = c.createGain();
+      g.gain.setValueAtTime(0.0001, 0);
+      g.gain.exponentialRampToValueAtTime(0.55, 0.004);
+      g.gain.exponentialRampToValueAtTime(0.0001, 0.11);
+      o.connect(lp).connect(g).connect(c.destination);
+      o.start(0);
+      o.stop(0.15);
     },
   },
-  click: { sec: 0.08, build: (c) => noise(c, 0.06, "highpass", [[0, 2500]], 0.8, [[0, 0.9], [0.025, 0]]) },
+  click: { sec: 0.08, build: (c) => noise(c, 0.06, "bandpass", [[0, 2200]], 1.2, [[0, 0.6], [0.02, 0]]) },
   impact: {
     sec: 1.2,
     build: (c) => {

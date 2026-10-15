@@ -32,6 +32,7 @@ import {
   type SfxId,
   type SfxItem,
   type TextItem,
+  type TextPresetId,
   type TextStyle,
   type TransitionItem,
 } from "./project.js";
@@ -187,7 +188,7 @@ export const EDIT_TOOLS = [
       type: "object",
       properties: {
         text: str("The text. Use \\n for a line break and *word* for accent colour."),
-        preset: enm(TEXT_PRESET_IDS, "Template. hook = big opening line, callout = boxed keyword, lower-third = name/role, number = big stat, cta = end-card button"),
+        preset: enm(TEXT_PRESET_IDS, "Template. hook = big opening line, title = section or point title, callout = boxed keyword, lower-third = name/role, number = big figure only (\"*01*\", \"*3x*\", \"*+38%*\"; an optional short label on a second line is set small), cta = end-card button"),
         ...timing,
         position: enm(POSITIONS, "Vertical placement. Avoid the caption zone (lower) when captions are on."),
         x: num("Centre x, 0-100 of width"),
@@ -243,7 +244,7 @@ export const EDIT_TOOLS = [
   },
   {
     name: "add_sfx",
-    description: "Add a sound effect. Use sparingly and on purpose: whoosh on transitions, pop on callouts, ding on a payoff.",
+    description: "Add a sound effect. Only when the brief is punchy social or asks for sound design, never for calm, educational, premium or corporate edits. Use sparingly: whoosh on transitions, pop on a callout, ding on a payoff.",
     input_schema: {
       type: "object",
       properties: {
@@ -594,10 +595,12 @@ const HANDLERS: Record<string, (c: Ctx, input: In) => void> = {
     const preset = oneOf(i.preset, TEXT_PRESET_IDS) ?? "callout";
     const at = resolveStart(c, i);
     const item = makeText(preset, i.text.replace(/\\n/g, "\n"), at.start);
+    item.style = { ...item.style, ...houseStyle(c.p, preset) };
     Object.assign(item, at);
     item.duration = resolveDuration(c, i, at.start, item.duration);
     applyTextFields(item, i);
     c.p.items.push(item);
+    makeRoomFor(c, item);
     const sfx = oneOf(i.sfx, SFX_IDS);
     if (sfx) addSfxAt(c, sfx, item.start, -6, item.anchorWord);
     c.notes.push({ op: "text", text: `Text “${item.text.replace(/\*/g, "").replace(/\n/g, " ")}” at ${fmt(item.start)}` });
@@ -814,6 +817,43 @@ const HANDLERS: Record<string, (c: Ctx, input: In) => void> = {
     if (isStr(i.name) && i.name.trim()) c.p.name = i.name.trim().slice(0, 80);
   },
 };
+
+// One typographic system per video: titles, numbers and the rest take the font (and, for titles, the whole
+// look) of the video's first title, unless the request sets a style explicitly.
+const TITLE_LIKE: TextPresetId[] = ["hook", "title", "number"];
+function houseStyle(p: Project, preset: TextPresetId): Partial<TextStyle> {
+  if (preset === "quote") return {};
+  const texts = p.items.filter((it): it is TextItem => it.type === "text");
+  const lead = texts.find((t) => TITLE_LIKE.includes(t.preset)) ?? texts[0];
+  if (!lead) return {};
+  const ls = lead.style;
+  if (!TITLE_LIKE.includes(preset) || ls.background) return { font: ls.font, weight: ls.weight };
+  return {
+    font: ls.font,
+    weight: ls.weight,
+    uppercase: ls.uppercase,
+    italic: ls.italic,
+    color: ls.color,
+    accentColor: ls.accentColor,
+    strokeColor: ls.strokeColor,
+    strokeWidth: preset === "number" ? Math.min(ls.strokeWidth, 10) : ls.strokeWidth,
+    shadow: ls.shadow,
+    letterSpacing: ls.letterSpacing,
+  };
+}
+
+// A new text layer replaces whatever text sits in the same spot: the earlier one ends when it appears.
+function makeRoomFor(c: Ctx, item: TextItem) {
+  const placed = placeItems(c.p.items, c.t);
+  const mine = placed.find((p) => p.item === item);
+  if (!mine) return;
+  for (const p of placed) {
+    if (p.item === item || p.item.type !== "text") continue;
+    const other = p.item;
+    const sameSpot = Math.abs(other.x - item.x) < 30 && Math.abs(other.y - item.y) < 18;
+    if (sameSpot && p.start < mine.start && p.end > mine.start) other.duration = Math.max(0.4, mine.start - p.start);
+  }
+}
 
 function applyTextFields(item: TextItem, i: In) {
   const pos = oneOf(i.position, POSITIONS);

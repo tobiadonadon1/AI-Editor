@@ -98,3 +98,24 @@ test("the AI sees ids, times and cut state", () => {
   assert.match(text, /adjust .* zoom 1\.18 punch/);
   assert.equal(placeItems(project.items, tl(project)).length, 1);
 });
+
+test("later titles take the hook's look, and a new title in the same spot ends the previous one", () => {
+  const { project, errors } = applyOps(
+    sample(),
+    [
+      { name: "add_text", input: { text: "Stop *now*", preset: "hook", start_sec: 0, duration_sec: 3, y: 20, style: { font: "Anton" } } },
+      { name: "add_text", input: { text: "Point *one*", preset: "title", start_sec: 2, duration_sec: 2, y: 22 } },
+      { name: "add_text", input: { text: "*1*\nBought a board", preset: "number", start_sec: 5, duration_sec: 2, x: 80 } },
+      { name: "add_text", input: { text: "Different", preset: "title", start_sec: 8, duration_sec: 1, style: { font: "Lora" } } },
+    ],
+    ctx,
+  );
+  assert.deepEqual(errors, []);
+  const [hook, title, number, custom] = project.items.filter((i): i is TextItem => i.type === "text");
+  assert.equal(title.style.font, "Anton");
+  assert.equal(title.style.uppercase, hook.style.uppercase);
+  assert.equal(title.style.strokeWidth, hook.style.strokeWidth);
+  assert.equal(number.style.font, "Anton");
+  assert.equal(custom.style.font, "Lora", "an explicit style still wins");
+  assert.ok(Math.abs(hook.duration - 2) < 0.01, `hook ends when the title appears: ${hook.duration}`);
+});

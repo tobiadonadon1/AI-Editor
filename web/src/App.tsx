@@ -48,8 +48,12 @@ const appearance = {
     colorBorder: "#3d3d3d",
     colorDanger: "#e5484d",
     fontFamily: '"Source Sans 3", -apple-system, "Segoe UI", system-ui, sans-serif',
-    borderRadius: "4px",
+    borderRadius: "6px",
+    // The editor's root font is 12px for dense panels; Clerk would scale down with it.
+    fontSize: "15px",
+    spacing: "17px",
   },
+  elements: { cardBox: { width: "100%", maxWidth: "440px" }, rootBox: { width: "100%", maxWidth: "440px" } },
 };
 
 const localization = {

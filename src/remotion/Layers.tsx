@@ -1,4 +1,5 @@
-import { AbsoluteFill, useCurrentFrame, useVideoConfig } from "remotion";
+import { useEffect, useState } from "react";
+import { AbsoluteFill, continueRender, delayRender, useCurrentFrame, useVideoConfig } from "remotion";
 import type { ShapeItem, TextItem } from "../shared/project";
 import { animState, combine, inOut, type AnimState } from "./anim";
 import { font } from "./fonts";
@@ -16,6 +17,109 @@ export function parseRich(text: string): { text: string; accent: boolean }[][] {
   });
 }
 
+// Text is measured with a canvas so a layer can shrink until every word fits inside the frame.
+let measureCtx: CanvasRenderingContext2D | null | undefined;
+function measure(text: string, spec: string): number {
+  if (measureCtx === undefined) measureCtx = typeof document === "undefined" ? null : document.createElement("canvas").getContext("2d");
+  if (!measureCtx) return text.length * 55; // rough width at 100px
+  measureCtx.font = spec;
+  return measureCtx.measureText(text).width;
+}
+
+// Re-measures once the web font has arrived; rendering waits for it.
+function useFontReady(spec: string) {
+  const [ready, setReady] = useState(() => typeof document === "undefined" || document.fonts.check(spec));
+  useEffect(() => {
+    if (ready) return;
+    let live = true;
+    let open = true;
+    const handle = delayRender(`Loading font ${spec}`, { timeoutInMilliseconds: 15000 });
+    const done = () => {
+      if (open) continueRender(handle);
+      open = false;
+    };
+    document.fonts.load(spec).then(() => live && setReady(true), () => live && setReady(true)).finally(done);
+    return () => {
+      live = false;
+      done();
+    };
+  }, [spec, ready]);
+  return ready;
+}
+
+// "*1*\nBought a blackboard" in a big-number layer: the figure stays big, the label under it is set small.
+export const isNumberWithLabel = (item: TextItem) => {
+  if (item.preset !== "number") return false;
+  const lines = item.text.split("\n");
+  return lines.length > 1 && lines[0].replace(/\*/g, "").trim().length <= 6;
+};
+const LABEL_SCALE = 0.3;
+
+interface Fit {
+  size: number; // px
+  lineHeight: number;
+  boxWidth: number; // px
+  x: number; // % of frame width
+  y: number; // % of frame height
+}
+
+// Largest size up to the requested one at which no word overflows the box and the block fits the frame,
+// with the box kept inside a safe margin.
+function fitText(item: TextItem, family: string, W: number, H: number, k: number): Fit {
+  const s = item.style;
+  const marginX = 0.04 * W;
+  const marginY = 0.05 * H;
+  const boxWidth = Math.min((item.width / 100) * W, W - 2 * marginX);
+  const padX = s.background ? s.padding * k : 0;
+  const padY = s.background ? s.padding * k * 0.6 : 0;
+  const stroke = s.strokeWidth ? s.strokeWidth * 2 * k : 0;
+  const avail = Math.max(20, (boxWidth - 2 * padX - stroke) * 0.97);
+  const spec = (px: number) => `${s.italic ? "italic " : ""}${s.weight} ${px}px "${family}"`;
+  const at100 = spec(100);
+  const spacing = s.letterSpacing / 100; // em
+  const width100 = (t: string) => {
+    const shown = s.uppercase ? t.toUpperCase() : t;
+    return measure(shown, at100) + spacing * 100 * shown.length;
+  };
+  const labelled = isNumberWithLabel(item);
+  const lines = parseRich(item.text).map((runs, i) => ({ text: runs.map((r) => r.text).join(""), scale: labelled && i > 0 ? LABEL_SCALE : 1 }));
+  // Tall display faces collide across lines when set too tight, mostly through descenders.
+  const lineHeight = Math.max(s.lineHeight, s.uppercase ? 1.0 : 1.12);
+
+  let size = s.size * k;
+  for (const line of lines)
+    for (const word of line.text.split(/\s+/).filter(Boolean)) {
+      const w = (width100(word) / 100) * line.scale;
+      if (w * size > avail) size = avail / w;
+    }
+  const height = (px: number) => {
+    let h = 0;
+    for (const line of lines) {
+      const words = line.text.split(/\s+/).filter(Boolean);
+      let rows = 1;
+      let current = "";
+      for (const word of words) {
+        const next = current ? `${current} ${word}` : word;
+        if (current && (width100(next) / 100) * line.scale * px > avail) {
+          rows++;
+          current = word;
+        } else current = next;
+      }
+      h += rows * px * line.scale * lineHeight;
+    }
+    return h + 2 * padY;
+  };
+  const maxH = 0.72 * H;
+  for (let n = 0; n < 16 && height(size) > maxH; n++) size *= 0.92;
+
+  const h = height(size);
+  const halfW = (boxWidth / 2 / W) * 100;
+  const halfH = (h / 2 / H) * 100;
+  const x = Math.min(100 - halfW - (marginX / W) * 100, Math.max(halfW + (marginX / W) * 100, item.x));
+  const y = Math.min(100 - halfH - (marginY / H) * 100, Math.max(halfH + (marginY / H) * 100, item.y));
+  return { size, lineHeight, boxWidth, x: halfW * 2 > 100 - 8 ? 50 : x, y: halfH * 2 > 100 - 10 ? 50 : y };
+}
+
 const useScale = () => {
   const { width, height } = useVideoConfig();
   return Math.min(width, height) / 1080;
@@ -29,10 +133,14 @@ function itemAnim(frame: number, fps: number, duration: number, animIn: TextItem
 
 export const TextLayer: React.FC<{ item: TextItem; duration: number }> = ({ item, duration }) => {
   const frame = useCurrentFrame();
-  const { fps, width } = useVideoConfig();
+  const { fps, width, height } = useVideoConfig();
   const k = useScale();
   const s = item.style;
   const family = font(s.font, s.italic);
+  const fontReady = useFontReady(`${s.italic ? "italic " : ""}${s.weight} 100px "${family}"`);
+  const fit = fitText(item, family, width, height, k);
+  void fontReady; // measuring again after the font loads is what this re-render is for
+  const labelled = isNumberWithLabel(item);
   const typing = item.animIn === "typewriter" || item.animIn === "words";
   // Typing reveals take longer than a simple entrance.
   const lines = parseRich(item.text);
@@ -53,9 +161,9 @@ export const TextLayer: React.FC<{ item: TextItem; duration: number }> = ({ item
         data-item-id={item.id}
         style={{
           position: "absolute",
-          left: `${item.x}%`,
-          top: `${item.y}%`,
-          width: (item.width / 100) * width,
+          left: `${fit.x}%`,
+          top: `${fit.y}%`,
+          width: fit.boxWidth,
           transform: `translate(-50%, -50%) rotate(${item.rotation}deg) ${a.transform}`,
           opacity: a.opacity * (item.opacity / 100),
           filter: a.filter,
@@ -68,10 +176,10 @@ export const TextLayer: React.FC<{ item: TextItem; duration: number }> = ({ item
           style={{
             display: "inline-block",
             fontFamily: family,
-            fontSize: s.size * k,
+            fontSize: fit.size,
             fontWeight: s.weight,
             fontStyle: s.italic ? "italic" : "normal",
-            lineHeight: s.lineHeight,
+            lineHeight: fit.lineHeight,
             letterSpacing: `${s.letterSpacing / 100}em`,
             textTransform: s.uppercase ? "uppercase" : "none",
             textAlign: s.align,
@@ -88,7 +196,7 @@ export const TextLayer: React.FC<{ item: TextItem; duration: number }> = ({ item
           }}
         >
           {lines.map((line, li) => (
-            <div key={li}>
+            <div key={li} style={labelled && li > 0 ? { fontSize: `${LABEL_SCALE}em`, marginTop: "0.25em", WebkitTextStroke: s.strokeWidth ? `${s.strokeWidth * 2 * k * LABEL_SCALE}px ${s.strokeColor}` : undefined } : undefined}>
               {line.map((run, ri) => {
                 let shown = run.text;
                 if (item.animIn === "typewriter" && reveal < 1) {
