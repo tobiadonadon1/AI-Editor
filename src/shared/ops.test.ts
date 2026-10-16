@@ -119,3 +119,46 @@ test("later titles take the hook's look, and a new title in the same spot ends t
   assert.equal(custom.style.font, "Lora", "an explicit style still wins");
   assert.ok(Math.abs(hook.duration - 2) < 0.01, `hook ends when the title appears: ${hook.duration}`);
 });
+
+test("times the AI gives refer to the edit it saw, even after a cut earlier in the same turn", () => {
+  // Cutting w0-w3 first moves w5 "ship" earlier; the AI still gave the time it saw before the turn.
+  const before = wordOutputTime(tl(sample()), "w5")!;
+  const { project, errors } = applyOps(
+    sample(),
+    [
+      { name: "cut_words", input: { from_word: "w0", to_word: "w3", reason: "retake" } },
+      { name: "add_text", input: { text: "Ship", preset: "callout", start_sec: before, duration_sec: 1 } },
+    ],
+    ctx,
+  );
+  assert.deepEqual(errors, []);
+  const t = tl(project);
+  const text = project.items.find((i) => i.type === "text")!;
+  const ship = wordOutputTime(t, "w5")!;
+  assert.ok(Math.abs(itemStart(text, t) - ship) < 0.1, `text at ${itemStart(text, t)}, word at ${ship}`);
+});
+
+test("bad input is rejected without side effects", () => {
+  let { project } = applyOps(sample(), [{ name: "add_text", input: { text: "A", preset: "title", start_sec: 1, duration_sec: 1 } }], ctx);
+  const r1 = applyOps(project, [{ name: "add_text", input: { text: "B", start_word: "w999" } }], ctx);
+  assert.equal(r1.errors.length, 1, "unknown word is an error");
+  assert.equal(r1.project.items.length, 1);
+  project.assets.push({ id: "a1", name: "song", kind: "audio", durationSec: 30, width: 0, height: 0, hasAudio: true, size: 1 });
+  ({ project } = applyOps(project, [{ name: "set_music", input: { asset_id: "a1" } }], ctx));
+  const r2 = applyOps(project, [{ name: "set_music", input: { asset_id: "nope" } }], ctx);
+  assert.equal(r2.errors.length, 1);
+  assert.ok(r2.project.items.some((i) => i.type === "music"), "existing music kept");
+});
+
+test("a new title at the same time and place replaces the old one", () => {
+  const { project } = applyOps(
+    sample(),
+    [
+      { name: "add_text", input: { text: "One", preset: "title", start_sec: 1, duration_sec: 3 } },
+      { name: "add_text", input: { text: "Two", preset: "title", start_sec: 1.2, duration_sec: 3 } },
+    ],
+    ctx,
+  );
+  const texts = project.items.filter((i): i is TextItem => i.type === "text");
+  assert.deepEqual(texts.map((t) => t.text), ["Two"]);
+});

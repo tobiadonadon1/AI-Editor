@@ -2770,3 +2770,13 @@ button.save-state.warn:hover {
     overflow: hidden;
   }
 }
+
+.row-gap {
+  display: flex;
+  gap: 8px;
+}
+.center-note .fine {
+  max-width: 420px;
+  text-align: center;
+  color: var(--text-3, var(--text-2));
+}

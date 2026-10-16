@@ -50,21 +50,25 @@ export function ExportView({ onBack }: { onBack: () => void }) {
   }, [outW, outH]);
 
   useEffect(() => () => abort.current?.abort(), []);
+  // Each export holds a whole MP4 in memory; let go of it when it is replaced or the view closes.
+  useEffect(() => () => void (result && URL.revokeObjectURL(result.url)), [result]);
 
   const start = async () => {
     setError(null);
     setResult(null);
     setProgress(0);
-    abort.current = new AbortController();
+    const controller = new AbortController();
+    abort.current = controller;
     try {
-      const r = await exportMp4(project, media, sfx, { quality, scale, range: range === "custom" ? [from, to] : null }, setProgress, abort.current.signal);
+      const r = await exportMp4(project, media, sfx, { quality, scale, range: range === "custom" ? [from, to] : null }, setProgress, controller.signal);
       setResult(r);
       const a = document.createElement("a");
       a.href = r.url;
       a.download = `${name || "edit"}.mp4`;
       a.click();
     } catch (e) {
-      if (!(e instanceof DOMException && e.name === "AbortError")) setError(e instanceof Error ? e.message : String(e));
+      // The renderer rejects with a plain Error when cancelled, so the signal is what says it was the user.
+      if (!controller.signal.aborted) setError(e instanceof Error ? e.message : String(e));
     } finally {
       setProgress(null);
       abort.current = null;

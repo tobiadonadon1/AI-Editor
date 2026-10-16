@@ -3,6 +3,8 @@ import type { CaptionPage } from "../shared/timeline";
 import type { CaptionStyle } from "../shared/project";
 import { clamp01, easeOutBack, easeOutCubic, easeOutElastic } from "./anim";
 import { font } from "./fonts";
+import { measure, useFontReady } from "./Layers";
+import { useMemo } from "react";
 
 export const Captions: React.FC<{ pages: CaptionPage[]; style: CaptionStyle }> = ({ pages, style }) => {
   const { fps } = useVideoConfig();
@@ -29,6 +31,17 @@ const Page: React.FC<{ page: CaptionPage; style: CaptionStyle }> = ({ page, styl
   const k = Math.min(width, height) / 1080;
   const nowMs = page.startMs + (frame / fps) * 1000;
   const family = font(style.font);
+  const spec = `900 100px "${family}"`;
+  const fontReady = useFontReady(spec);
+  // The longest word must fit across the frame, with room for the stroke, box and pop/bounce scale.
+  const size = useMemo(() => {
+    const base = style.size * k;
+    const avail = width * 0.86 * 0.9 - (style.strokeWidth ? style.strokeWidth * 4 * k : 0);
+    let widest = 0;
+    for (const w of page.words) widest = Math.max(widest, measure(style.uppercase ? w.text.toUpperCase() : w.text, spec) / 100);
+    const pad = style.background || style.activeBox ? 1.1 : 1;
+    return widest > 0 ? Math.min(base, avail / (widest * pad)) : base;
+  }, [page.words, style.size, style.strokeWidth, style.uppercase, style.background, style.activeBox, k, width, spec, fontReady]); // eslint-disable-line react-hooks/exhaustive-deps
   const enterT = clamp01(frame / (0.22 * fps));
   const anim = style.animation;
 
@@ -63,14 +76,14 @@ const Page: React.FC<{ page: CaptionPage; style: CaptionStyle }> = ({ page, styl
             rowGap: "0.06em",
             fontFamily: family,
             fontWeight: 900,
-            fontSize: style.size * k,
+            fontSize: size,
             lineHeight: 1.12,
             textAlign: "center",
             color: style.color,
             textTransform: style.uppercase ? "uppercase" : "none",
             background: style.background ?? undefined,
             padding: style.background ? `${0.18}em ${0.42}em` : 0,
-            borderRadius: style.background ? 0.22 * style.size * k : 0,
+            borderRadius: style.background ? 0.22 * size : 0,
           }}
         >
           {page.words.map((w) => {
@@ -100,7 +113,7 @@ const Page: React.FC<{ page: CaptionPage; style: CaptionStyle }> = ({ page, styl
                   paintOrder: "stroke fill",
                   textShadow: boxed ? undefined : shadow,
                   background: boxed ? style.activeBox! : undefined,
-                  borderRadius: boxed ? 0.16 * style.size * k : undefined,
+                  borderRadius: boxed ? 0.16 * size : undefined,
                   padding: style.activeBox ? `0 ${0.14}em` : undefined,
                   margin: style.activeBox ? `0 ${-0.14}em` : undefined,
                 }}

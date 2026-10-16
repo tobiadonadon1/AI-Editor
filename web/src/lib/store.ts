@@ -114,20 +114,32 @@ function scheduleSave() {
   }
 }
 
+// One save at a time, and each save sends the newest version: a save that starts while another is
+// in flight waits, then sends whatever is current, so an older copy never lands last.
 let syncing: Promise<void> | null = null;
-export async function flushCloud() {
+export async function flushCloud(target: Project | null = state.project): Promise<void> {
   window.clearTimeout(cloudTimer);
-  const p = state.project;
-  if (!cloud.on || !p || state.synced !== "pending") return;
-  await syncing;
+  if (syncing) {
+    await syncing;
+    // Leaving the editor passes the project explicitly, since the store may already be on the next one.
+    if (state.synced === "pending" || (target && target !== state.project)) return flushCloud(target === state.project ? state.project : target);
+    return;
+  }
+  const p = target;
+  if (!cloud.on || !p || (p === state.project && state.synced !== "pending")) return;
   syncing = cloudApi
     .saveProject(p)
     .then(() => {
       if (state.project === p) set({ synced: "saved" });
     })
-    .catch(() => set({ synced: "error" }))
+    .catch((e) => {
+      set({ synced: "error" });
+      if (e instanceof ApiError && e.code === "conflict")
+        set({ notice: "This project was changed on another device after you opened it here. Reopen it to load the newer version; your changes here are kept in this browser." });
+    })
     .finally(() => (syncing = null));
   await syncing;
+  if (state.project && state.project !== p && state.synced === "pending") return flushCloud();
 }
 
 // Status and chat updates: saved, but not part of undo.
@@ -208,37 +220,78 @@ async function urlFor(asset: MediaAsset): Promise<string | null> {
   return blob ? URL.createObjectURL(blob) : null;
 }
 
+// Each open gets a number; work from an earlier open that finishes late is dropped.
+let openSeq = 0;
 export async function openProject(id: string) {
+  const seq = ++openSeq;
+  const stale = () => seq !== openSeq;
   Object.values(state.media).forEach((u) => URL.revokeObjectURL(u));
+  set({ media: {} });
   let project = await db.getProject(id);
   // The account's copy wins when it is newer (edited on another device) or this browser has none.
   let remote: Project | null = null;
+  let remoteKnown = true;
   if (cloud.on) {
-    remote = await cloudApi.getProject(id);
+    try {
+      remote = await cloudApi.getProject(id);
+    } catch (e) {
+      // Offline or a server error: open what this browser has, and do not push it over the account's copy.
+      remoteKnown = false;
+      if (!project) throw new Error(`Could not load this project from your account: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    if (stale()) return;
     if (remote && (!project || remote.updatedAt > project.updatedAt)) {
       project = remote;
       await db.putProject(remote);
     }
   }
+  if (stale()) return;
   if (!project) throw new Error(cloud.on ? "This project is not in your account." : "This project is not in this browser. Projects are stored on the device where they were made.");
   // A project the account does not have yet (made before signing in, or its first save failed) is sent now.
-  const unsynced = cloud.on && (!remote || remote.updatedAt < project.updatedAt);
-  state = { ...initial, workspace: state.workspace, pxPerSec: state.pxPerSec, synced: !cloud.on ? "off" : unsynced ? "pending" : "saved" };
+  const unsynced = cloud.on && remoteKnown && (!remote || remote.updatedAt < project.updatedAt);
+  state = { ...initial, workspace: state.workspace, pxPerSec: state.pxPerSec, synced: !cloud.on ? "off" : !remoteKnown ? "error" : unsynced ? "pending" : "saved" };
   set({ project, timeline: timelineOf(project) });
+  if (!remoteKnown) set({ notice: "Could not reach your account, so this is the copy saved in this browser. Changes sync when the connection is back (use Retry in the header)." });
   if (unsynced) void flushCloud();
-  void sfxLibrary().then((sfx) => set({ sfx }));
-  const media: Record<string, string> = {};
+  void sfxLibrary().then((sfx) => !stale() && set({ sfx }));
+  // Each file appears as soon as it is ready, instead of after the slowest download.
   for (const a of project.assets) {
     if (!(await editCopy(a)) && a.cloud) await fetchFromCloud(a);
+    if (stale()) return;
     const url = await urlFor(a);
-    if (url) media[a.id] = url;
+    if (stale()) {
+      if (url) URL.revokeObjectURL(url);
+      return;
+    }
+    if (url) set((s) => ({ media: { ...s.media, [a.id]: url } }));
   }
-  set({ media });
   for (const a of project.assets) void loadVisuals(a);
   // Media imported before signing in, or an upload cut off by closing the tab.
   for (const a of project.assets) if (!a.cloud && cloud.on) void backUp(project.id, a);
   // A tab closed mid-import leaves the project half-done: resume where it stopped.
   if (project.status === "transcribing" || project.status === "planning" || project.status === "importing") void resume();
+}
+
+// Leaving the editor sends unsaved changes and frees the media held in memory.
+export function closeProject(id: string) {
+  const p = state.project;
+  if (p?.id !== id) return;
+  if (state.synced === "pending") void flushCloud(p);
+  openSeq++;
+  Object.values(state.media).forEach((u) => URL.revokeObjectURL(u));
+  state = { ...initial, workspace: state.workspace, pxPerSec: state.pxPerSec };
+  emit();
+}
+
+// Applies a change to a project whether or not it is still the one open (work that finishes after
+// the user moved on lands in the right project).
+async function updateProject(id: string, change: (p: Project) => Project) {
+  if (state.project?.id === id) return setProject(change(state.project));
+  const stored = await db.getProject(id);
+  if (!stored) return;
+  const next = { ...change(stored), updatedAt: new Date().toISOString() };
+  await db.putProject(next);
+  if (cloud.on) await cloudApi.saveProject(next).catch(() => undefined);
 }
 
 async function loadVisuals(a: MediaAsset) {
@@ -308,16 +361,7 @@ async function backUp(projectId: string, a: MediaAsset) {
   const t = task(`Uploading ${a.name} to your account`);
   try {
     await cloudApi.uploadMedia(path, blob, (v) => t.progress(v));
-    const mark = (p: Project): Project => ({ ...p, assets: p.assets.map((x) => (x.id === a.id ? { ...x, cloud: path } : x)) });
-    if (state.project?.id === projectId) setProject(mark(state.project));
-    else {
-      const stored = await db.getProject(projectId);
-      if (stored) {
-        const next = mark(stored);
-        await db.putProject(next);
-        await cloudApi.saveProject(next);
-      }
-    }
+    await updateProject(projectId, (p) => ({ ...p, assets: p.assets.map((x) => (x.id === a.id ? { ...x, cloud: path } : x)) }));
   } catch (e) {
     set({ notice: `${a.name} is saved in this browser but did not upload to your account: ${e instanceof Error ? e.message : String(e)}. It will retry next time you open the project.` });
   } finally {
@@ -329,6 +373,8 @@ async function backUp(projectId: string, a: MediaAsset) {
 
 export async function importFiles(files: File[], opts: { asMain?: boolean } = {}): Promise<MediaAsset[]> {
   const added: MediaAsset[] = [];
+  const projectId = state.project?.id;
+  if (!projectId) return added;
   for (const file of files) {
     const kind = kindOf(file);
     if (!kind) {
@@ -356,12 +402,15 @@ export async function importFiles(files: File[], opts: { asMain?: boolean } = {}
           console.warn("proxy failed, editing the original", e);
         }
       }
-      set((s) => ({ media: { ...s.media, [asset.id]: url } }));
-      const cur = state.project!;
-      const isMain = (opts.asMain || !cur.mainAssetId) && kind === "video";
-      setProject({ ...cur, assets: [...cur.assets, asset], mainAssetId: isMain ? asset.id : cur.mainAssetId });
-      void loadVisuals(asset);
-      if (cloud.on) void backUp(cur.id, asset);
+      const here = state.project?.id === projectId;
+      if (here) set((s) => ({ media: { ...s.media, [asset.id]: url } }));
+      else URL.revokeObjectURL(url);
+      await updateProject(projectId, (cur) => {
+        const isMain = (opts.asMain || !cur.mainAssetId) && kind === "video";
+        return { ...cur, assets: [...cur.assets, asset], mainAssetId: isMain ? asset.id : cur.mainAssetId };
+      });
+      if (here) void loadVisuals(asset);
+      if (cloud.on) void backUp(projectId, asset);
       added.push(asset);
     } catch (e) {
       set({ notice: e instanceof Error ? e.message : String(e) });
@@ -398,7 +447,11 @@ export async function transcribeMain() {
     let language: string | undefined;
     for (let i = 0; i < chunks.length; i++) {
       t.progress(i / chunks.length, `Transcribing ${chunks.length > 1 ? `part ${i + 1} of ${chunks.length}` : ""}`.trim());
-      const res = await api.transcribeChunk(chunks[i].blob);
+      // Later parts keep the language of the first, and each part gets a second try.
+      const res = await api.transcribeChunk(chunks[i].blob, language).catch((e) => {
+        if (e instanceof ApiError && (e.code === "auth" || e.code === "key")) throw e;
+        return api.transcribeChunk(chunks[i].blob, language);
+      });
       language ??= res.language;
       for (const w of res.words) words.push({ ...w, id: `w${words.length}`, start: w.start + chunks[i].offsetSec, end: w.end + chunks[i].offsetSec });
     }
@@ -455,19 +508,26 @@ export async function ask(prompt: string, mode: "first_cut" | "edit" = "edit") {
   const ctx = { playhead: playheadSec(), selectedItemId: state.selectedItem };
   try {
     const res = await api.assistant({ mode, prompt, state: describeForAI(state.project!, ctx), frames: await aiFrames(), history }, aborter.signal);
-    const before = state.project!;
+    const here = state.project?.id === p.id;
+    const before = here ? state.project! : await db.getProject(p.id);
+    if (!before) return;
     const { project: next, notes, errors } = applyOps(before, res.ops as Op[], ctx);
     if (errors.length) console.warn("AI operations skipped:", errors);
-    if (notes.length) {
-      snapshots.set(reply.id, before);
-      set({ past: [...state.past.slice(-149), before], future: [] });
-    }
-    setProject({ ...next, chat: before.chat.map((m) => (m.id === reply.id ? { ...m, text: res.message, pending: false, changes: notes, undoable: notes.length > 0 } : m)) });
-    if (mode === "first_cut") status({ status: "ready", statusDetail: undefined, summary: res.message });
+    const skipped = errors.length ? [{ op: "skipped", text: `${errors.length} change${errors.length === 1 ? "" : "s"} could not be applied` }] : [];
+    const text = res.truncated ? `${res.message}\n\nThe edit was too long to finish in one go; ask me to continue for the rest.` : res.message;
+    const done = (chat: ChatMessage[]) => chat.map((m) => (m.id === reply.id ? { ...m, text, pending: false, changes: [...notes, ...skipped], undoable: notes.length > 0 } : m));
+    const finished = mode === "first_cut" ? { status: "ready" as const, statusDetail: undefined, summary: res.message } : {};
+    if (here) {
+      if (notes.length) {
+        snapshots.set(reply.id, before);
+        set({ past: [...state.past.slice(-149), before], future: [] });
+      }
+      setProject({ ...next, ...finished, chat: done(before.chat) });
+    } else await updateProject(p.id, () => ({ ...next, ...finished, chat: done(before.chat) }));
   } catch (e) {
     const aborted = e instanceof DOMException && e.name === "AbortError";
-    patchChat(reply.id, { pending: false, error: !aborted, text: aborted ? "Stopped." : e instanceof Error ? e.message : String(e) });
-    if (mode === "first_cut") status({ status: "ready", statusDetail: undefined });
+    const fail = { pending: false, error: !aborted, text: aborted ? "Stopped." : e instanceof Error ? e.message : String(e) };
+    await updateProject(p.id, (cur) => ({ ...cur, ...(mode === "first_cut" ? { status: "ready" as const, statusDetail: undefined } : {}), chat: cur.chat.map((m) => (m.id === reply.id ? { ...m, ...fail } : m)) }));
     if (e instanceof ApiError && e.code === "auth") set({ notice: "Your session expired. Reload the page and sign in again." });
   } finally {
     set({ assistantBusy: false });

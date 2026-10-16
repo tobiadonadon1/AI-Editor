@@ -12,7 +12,7 @@ import * as PermanentMarker from "@remotion/google-fonts/PermanentMarker";
 import * as Bangers from "@remotion/google-fonts/Bangers";
 import * as RobotoMono from "@remotion/google-fonts/RobotoMono";
 import * as Lora from "@remotion/google-fonts/Lora";
-import type { FontId } from "../shared/project";
+import type { FontId, Project } from "../shared/project";
 
 interface FontModule {
   loadFont: (style?: never, options?: { weights?: string[]; subsets?: string[] }) => { fontFamily: string };
@@ -52,4 +52,17 @@ export function font(id: FontId, italic = false): string {
   const { fontFamily } = mod.loadFont(style as never, { weights: weights.length ? weights : available, subsets: ["latin"] });
   loaded.set(key, fontFamily);
   return fontFamily;
+}
+
+// Before an export or a still: load every face the project uses, so no frame is drawn with a fallback font.
+export async function preloadFonts(project: Project) {
+  if (typeof document === "undefined") return;
+  const specs = new Set<string>();
+  if (project.captions.enabled) specs.add(`900 100px "${font(project.captions.font)}"`);
+  for (const it of project.items) {
+    if (it.type !== "text") continue;
+    const s = it.style;
+    specs.add(`${s.italic ? "italic " : ""}${s.weight} 100px "${font(s.font, s.italic)}"`);
+  }
+  await Promise.all([...specs].map((spec) => document.fonts.load(spec).catch(() => undefined)));
 }

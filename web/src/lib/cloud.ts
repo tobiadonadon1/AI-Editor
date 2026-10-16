@@ -3,7 +3,7 @@
 import { upload } from "@vercel/blob/client";
 import { FPS, mainAsset, type MediaAsset, type Project } from "../../../src/shared/project";
 import { buildTimeline } from "../../../src/shared/timeline";
-import { authHeaders, call } from "./api";
+import { ApiError, authHeaders, call } from "./api";
 
 export interface Summary {
   id: string;
@@ -33,7 +33,12 @@ const summaryOf = (p: Project): Summary => {
 };
 
 export const listProjects = () => call<Summary[]>("/api/projects");
-export const getProject = (id: string) => call<Project>(`/api/projects?id=${encodeURIComponent(id)}`).catch(() => null);
+// null means the account has no such project; any other failure throws, so a hiccup is never mistaken for "missing".
+export const getProject = (id: string) =>
+  call<Project>(`/api/projects?id=${encodeURIComponent(id)}`).catch((e) => {
+    if (e instanceof ApiError && e.code === "404") return null;
+    throw e;
+  });
 export const saveProject = (p: Project) =>
   call(`/api/projects?id=${encodeURIComponent(p.id)}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ project: p, summary: summaryOf(p) }) });
 export const deleteProject = (id: string) => call(`/api/projects?id=${encodeURIComponent(id)}`, { method: "DELETE" });

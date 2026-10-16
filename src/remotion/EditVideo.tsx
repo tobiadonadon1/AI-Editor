@@ -156,7 +156,7 @@ function frameRect(asset: MediaAsset | undefined, W: number, H: number, fit: "co
 function duckCurve(timeline: Timeline, fps: number) {
   const n = timeline.durationInFrames;
   const curve = new Float32Array(n).fill(1);
-  const ease = 0.25 * fps;
+  const ease = Math.max(1, Math.round(0.25 * fps)); // whole frames: a Float32Array ignores x.5 indexes
   for (const w of timeline.words) {
     const a = Math.floor((w.startMs / 1000) * fps);
     const b = Math.ceil((w.endMs / 1000) * fps);

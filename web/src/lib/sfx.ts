@@ -152,7 +152,13 @@ export function sfxLibrary(): Promise<Record<SfxId, string>> {
         const s = SOUNDS[id];
         const ctx = new OfflineAudioContext(1, Math.ceil(s.sec * RATE), RATE);
         s.build(ctx);
-        return [id, URL.createObjectURL(toWav(await ctx.startRendering()))] as const;
+        const buffer = await ctx.startRendering();
+        // Layered sounds can sum past full scale; bring each down to a clean peak instead of clipping.
+        const ch = buffer.getChannelData(0);
+        let peak = 0;
+        for (let i = 0; i < ch.length; i++) peak = Math.max(peak, Math.abs(ch[i]));
+        if (peak > 0.89) for (let i = 0; i < ch.length; i++) ch[i] *= 0.89 / peak;
+        return [id, URL.createObjectURL(toWav(buffer))] as const;
       }),
     );
     return Object.fromEntries(entries) as Record<SfxId, string>;

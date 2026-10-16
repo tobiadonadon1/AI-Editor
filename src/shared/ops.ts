@@ -37,7 +37,7 @@ import {
   type TransitionItem,
 } from "./project.js";
 import { CAPTION_PRESETS, captionPreset, makeShape, makeText, resolveGrade } from "./presets.js";
-import { buildTimeline, cutPoints, durationSec, outputToSource, placeItems, wordOutputTime, type Timeline } from "./timeline.js";
+import { buildTimeline, cutPoints, durationSec, itemStart, outputToSource, placeItems, sourceToOutput, wordOutputTime, type Timeline } from "./timeline.js";
 
 export interface Op {
   name: string;
@@ -396,6 +396,7 @@ const POS_Y: Record<(typeof POSITIONS)[number], number> = { top: 12, upper: 28, 
 interface Ctx {
   p: Project;
   t: Timeline;
+  t0: Timeline; // the edit the AI saw when it planned this turn
   src: number; // main source duration
   ctx: OpContext;
   notes: ChangeNote[];
@@ -405,13 +406,29 @@ function rebuild(c: Ctx) {
   c.t = buildTimeline(c.p, c.src, FPS);
 }
 
+// The AI gives times on the edit as it was before this turn; earlier operations in the same turn
+// (cuts, pacing) may have moved things since, so times go through the source footage to the edit as it is now.
+function remap(c: Ctx, sec: number): number {
+  const total = durationSec(c.t);
+  if (c.t === c.t0) return clamp(sec, 0, total);
+  const src = outputToSource(c.t0, sec);
+  if (src === null) return clamp(sec, 0, total);
+  const out = sourceToOutput(c.t, src);
+  if (out !== null) return clamp(out, 0, total);
+  // That moment was cut: use the start of the next kept clip.
+  const f = src * c.t.fps;
+  const next = c.t.clips.find((cl) => cl.srcStartFrame >= f);
+  return next ? next.fromFrame / c.t.fps : total;
+}
+
 function wordIndex(p: Project, id: unknown) {
   if (!isStr(id)) return -1;
   return p.words.findIndex((w) => w.id === id);
 }
 
-// Start time with an optional anchor word.
+// Start time with an optional anchor word. An unknown word is an error, not a silent jump to the playhead.
 function resolveStart(c: Ctx, input: In): Pick<Item, "start" | "anchorWord" | "anchorOffset"> {
+  if (isStr(input.start_word) && wordIndex(c.p, input.start_word) < 0 && !isNum(input.start_sec)) throw new Error(`unknown word ${input.start_word}`);
   if (isStr(input.start_word)) {
     const at = wordOutputTime(c.t, input.start_word);
     if (at !== null) return { start: at, anchorWord: input.start_word, anchorOffset: 0 };
@@ -424,8 +441,8 @@ function resolveStart(c: Ctx, input: In): Pick<Item, "start" | "anchorWord" | "a
       }
     }
   }
-  if (isNum(input.start_sec)) return { start: clamp(input.start_sec, 0, durationSec(c.t)) };
-  return { start: clamp(c.ctx.playhead, 0, durationSec(c.t)) };
+  if (isNum(input.start_sec)) return { start: remap(c, input.start_sec) };
+  return { start: remap(c, c.ctx.playhead) };
 }
 
 function resolveDuration(c: Ctx, input: In, start: number, fallback: number) {
@@ -434,7 +451,10 @@ function resolveDuration(c: Ctx, input: In, start: number, fallback: number) {
     const w = c.t.words.find((x) => x.id === input.end_word);
     if (w && w.endMs / 1000 > start) return w.endMs / 1000 - start + 0.15;
   }
-  if (isNum(input.end_sec) && input.end_sec > start) return input.end_sec - start;
+  if (isNum(input.end_sec)) {
+    const end = remap(c, input.end_sec);
+    if (end > start) return end - start;
+  }
   return fallback;
 }
 
@@ -528,8 +548,8 @@ const HANDLERS: Record<string, (c: Ctx, input: In) => void> = {
   },
   cut_time(c, i) {
     if (!isNum(i.start_sec) || !isNum(i.end_sec) || i.end_sec <= i.start_sec) throw new Error("bad range");
-    const s = outputToSource(c.t, i.start_sec);
-    const e = outputToSource(c.t, i.end_sec - 1 / FPS);
+    const s = outputToSource(c.t0, i.start_sec);
+    const e = outputToSource(c.t0, i.end_sec - 1 / FPS);
     if (s === null || e === null) throw new Error("range outside the edit");
     c.p.rangeCuts.push({ id: uid("r"), start: s, end: e + 1 / FPS, reason: "manual" });
     c.notes.push({ op: "cut", text: `Cut ${fmt(i.end_sec - i.start_sec)} at ${fmt(i.start_sec)}` });
@@ -625,16 +645,19 @@ const HANDLERS: Record<string, (c: Ctx, input: In) => void> = {
     if (!kind) throw new Error("unknown transition");
     const dur = isNum(i.duration_sec) ? clamp(i.duration_sec, 0.1, 2) : kind === "dip-black" ? 0.5 : 0.3;
     const cuts = cutPoints(c.t);
+    const cuts0 = cutPoints(c.t0); // at_cut numbers refer to the cut list the AI was shown
     let times: number[] = [];
     if (i.every_cut) times = cuts;
-    else if (isNum(i.at_cut) && cuts[Math.round(i.at_cut)] !== undefined) times = [cuts[Math.round(i.at_cut)]];
+    else if (isNum(i.at_cut) && cuts0[Math.round(i.at_cut)] !== undefined) times = [remap(c, cuts0[Math.round(i.at_cut)])];
     else if (isStr(i.at_word) && wordOutputTime(c.t, i.at_word) !== null) times = [wordOutputTime(c.t, i.at_word)!];
-    else if (isNum(i.at_sec)) times = [i.at_sec];
+    else if (isNum(i.at_sec)) times = [remap(c, i.at_sec)];
     else {
       // Nearest cut to the playhead.
-      const near = cuts.reduce<number | null>((best, t) => (best === null || Math.abs(t - c.ctx.playhead) < Math.abs(best - c.ctx.playhead) ? t : best), null);
-      times = [near ?? c.ctx.playhead];
+      const here = remap(c, c.ctx.playhead);
+      const near = cuts.reduce<number | null>((best, t) => (best === null || Math.abs(t - here) < Math.abs(best - here) ? t : best), null);
+      times = [near ?? here];
     }
+    if (!times.length) throw new Error("there are no cuts to put a transition on yet");
     for (const t of times) {
       const item: TransitionItem = { id: uid("tr"), type: "transition", kind, start: Math.max(0, t - dur / 2), duration: dur, color: isStr(i.color) ? i.color : "#FFFFFF" };
       c.p.items.push(item);
@@ -644,7 +667,7 @@ const HANDLERS: Record<string, (c: Ctx, input: In) => void> = {
   add_sfx(c, i) {
     const sound = oneOf(i.sound, SFX_IDS);
     if (!sound) throw new Error("unknown sound");
-    const volume = isNum(i.volume_db) ? clamp(i.volume_db, -40, 10) : -6;
+    const volume = isNum(i.volume_db) ? clamp(i.volume_db, -40, 0) : -6;
     const on = oneOf(i.on, ["texts", "transitions", "zooms"] as const);
     if (on) {
       const placed = placeItems(c.p.items, c.t);
@@ -663,7 +686,8 @@ const HANDLERS: Record<string, (c: Ctx, input: In) => void> = {
     if (isStr(i.at_word) && wordOutputTime(c.t, i.at_word) !== null) {
       at = wordOutputTime(c.t, i.at_word)!;
       anchor = i.at_word;
-    } else if (isNum(i.at_sec)) at = i.at_sec;
+    } else if (isNum(i.at_sec)) at = remap(c, i.at_sec);
+    else at = remap(c, at);
     addSfxAt(c, sound, at, volume, anchor);
     c.notes.push({ op: "sfx", text: `${sound} at ${fmt(at)}` });
   },
@@ -685,7 +709,7 @@ const HANDLERS: Record<string, (c: Ctx, input: In) => void> = {
       scale: isNum(i.scale) ? clamp(i.scale, 0.1, 1) : fit === "pip" ? 0.42 : 1,
       radius: fit === "pip" ? 24 : 0,
       opacity: 100,
-      volume: isNum(i.volume_db) ? i.volume_db : -60,
+      volume: isNum(i.volume_db) ? clamp(i.volume_db, -60, 0) : -60,
       animIn: anim(i.anim_in) ?? (fit === "pip" ? "pop" : "fade"),
       animOut: anim(i.anim_out) ?? "fade",
       kenBurns: typeof i.ken_burns === "boolean" ? i.ken_burns : asset.kind === "image",
@@ -694,13 +718,14 @@ const HANDLERS: Record<string, (c: Ctx, input: In) => void> = {
     c.notes.push({ op: "broll", text: `B-roll “${asset.name}” at ${fmt(item.start)}` });
   },
   set_music(c, i) {
-    c.p.items = c.p.items.filter((it) => it.type !== "music");
     if (i.asset_id === null) {
+      c.p.items = c.p.items.filter((it) => it.type !== "music");
       c.notes.push({ op: "music", text: "Music removed" });
       return;
     }
     const asset = c.p.assets.find((a) => a.id === i.asset_id && (a.kind === "audio" || a.hasAudio));
     if (!asset) throw new Error("unknown audio");
+    c.p.items = c.p.items.filter((it) => it.type !== "music");
     const item: MusicItem = {
       id: uid("mu"),
       type: "music",
@@ -708,7 +733,7 @@ const HANDLERS: Record<string, (c: Ctx, input: In) => void> = {
       start: 0,
       duration: durationSec(c.t),
       trimStart: 0,
-      volume: isNum(i.volume_db) ? clamp(i.volume_db, -60, 6) : -18,
+      volume: isNum(i.volume_db) ? clamp(i.volume_db, -60, 0) : -18,
       duck: typeof i.duck === "boolean" ? i.duck : true,
       fadeIn: isNum(i.fade_in) ? i.fade_in : 0.5,
       fadeOut: isNum(i.fade_out) ? i.fade_out : 1.5,
@@ -747,7 +772,7 @@ const HANDLERS: Record<string, (c: Ctx, input: In) => void> = {
     if (isNum(i.focus_y)) v.focusY = clamp(i.focus_y, 0, 100);
     if (isNum(i.scale)) v.scale = clamp(i.scale, 0.3, 4);
     if (isNum(i.rotation)) v.rotation = clamp(i.rotation, -180, 180);
-    if (isNum(i.volume_db)) v.volume = clamp(i.volume_db, -60, 12);
+    if (isNum(i.volume_db)) v.volume = clamp(i.volume_db, -60, 0);
     const fit = oneOf(i.fit, ["cover", "contain"] as const);
     if (fit) v.fit = fit;
     c.p.video = v;
@@ -762,7 +787,8 @@ const HANDLERS: Record<string, (c: Ctx, input: In) => void> = {
       item.anchorWord = at.anchorWord;
       item.anchorOffset = at.anchorOffset;
     }
-    if (isNum(i.duration_sec) || isStr(i.end_word)) item.duration = resolveDuration(c, i, item.start, item.duration);
+    if (isStr(i.end_word) && wordIndex(c.p, i.end_word) < 0) throw new Error(`unknown word ${i.end_word}`);
+    if (isNum(i.duration_sec) || isStr(i.end_word) || isNum(i.end_sec)) item.duration = resolveDuration(c, i, itemStart(item, c.t), item.duration);
     if (typeof i.hidden === "boolean") item.hidden = i.hidden;
     switch (item.type) {
       case "text":
@@ -783,7 +809,7 @@ const HANDLERS: Record<string, (c: Ctx, input: In) => void> = {
       case "media":
         for (const k of ["x", "y", "opacity"] as const) if (isNum(i[k])) item[k] = i[k] as number;
         if (isNum(i.scale)) item.scale = clamp(i.scale, 0.1, 3);
-        if (isNum(i.volume_db)) item.volume = i.volume_db;
+        if (isNum(i.volume_db)) item.volume = clamp(i.volume_db, -60, 0);
         item.animIn = anim(i.anim_in) ?? item.animIn;
         item.animOut = anim(i.anim_out) ?? item.animOut;
         break;
@@ -798,10 +824,10 @@ const HANDLERS: Record<string, (c: Ctx, input: In) => void> = {
         break;
       case "sfx":
         item.sound = oneOf(i.sound, SFX_IDS) ?? item.sound;
-        if (isNum(i.volume_db)) item.volume = i.volume_db;
+        if (isNum(i.volume_db)) item.volume = clamp(i.volume_db, -40, 0);
         break;
       case "music":
-        if (isNum(i.volume_db)) item.volume = i.volume_db;
+        if (isNum(i.volume_db)) item.volume = clamp(i.volume_db, -60, 0);
         break;
     }
     c.notes.push({ op: "update", text: `Updated ${describeItem(item)}` });
@@ -842,17 +868,27 @@ function houseStyle(p: Project, preset: TextPresetId): Partial<TextStyle> {
   };
 }
 
-// A new text layer replaces whatever text sits in the same spot: the earlier one ends when it appears.
+// A new text layer replaces whatever text sits in the same spot: an earlier one ends when it appears (or
+// is removed if almost nothing of it would be left), and the new one ends before a later one there.
 function makeRoomFor(c: Ctx, item: TextItem) {
-  const placed = placeItems(c.p.items, c.t);
+  const placed = placeItems(c.p.items, c.t, true);
   const mine = placed.find((p) => p.item === item);
   if (!mine) return;
+  const drop = new Set<string>();
   for (const p of placed) {
     if (p.item === item || p.item.type !== "text") continue;
     const other = p.item;
     const sameSpot = Math.abs(other.x - item.x) < 30 && Math.abs(other.y - item.y) < 18;
-    if (sameSpot && p.start < mine.start && p.end > mine.start) other.duration = Math.max(0.4, mine.start - p.start);
+    if (!sameSpot || p.end <= mine.start || p.start >= mine.end) continue;
+    if (p.start < mine.start - 0.6) {
+      other.duration = mine.start - p.start;
+      c.notes.push({ op: "text", text: `Shortened ${describeItem(other)} so it ends when the new text appears` });
+    } else if (p.start <= mine.start + 0.05) {
+      drop.add(other.id);
+      c.notes.push({ op: "remove", text: `Replaced ${describeItem(other)} (same place and time)` });
+    } else item.duration = Math.max(0.4, p.start - mine.start);
   }
+  if (drop.size) c.p.items = c.p.items.filter((it) => !drop.has(it.id));
 }
 
 function applyTextFields(item: TextItem, i: In) {
@@ -889,7 +925,8 @@ const clone = <T,>(v: T): T => structuredClone(v);
 export function applyOps(project: Project, ops: Op[], ctx: OpContext): { project: Project; notes: ChangeNote[]; errors: string[] } {
   const p = clone(project);
   const src = mainAsset(p)?.durationSec ?? 0;
-  const c: Ctx = { p, t: buildTimeline(p, src, FPS), src, ctx, notes: [], };
+  const t = buildTimeline(p, src, FPS);
+  const c: Ctx = { p, t, t0: t, src, ctx, notes: [] };
   const errors: string[] = [];
   for (const op of ops) {
     const handler = HANDLERS[op.name];
@@ -939,7 +976,7 @@ export function describeForAI(p: Project, ctx: OpContext): string {
   const cuts = cutPoints(t);
   lines.push(`\nCut points (output s): ${cuts.length ? cuts.map((s, i) => `#${i} ${s.toFixed(2)}`).join(", ") : "none"}`);
 
-  const placed = placeItems(p.items, t);
+  const placed = placeItems(p.items, t, true);
   lines.push("\nLayers:");
   if (!placed.length) lines.push("(none)");
   for (const { item, start, end } of placed) {
@@ -966,7 +1003,9 @@ export function describeForAI(p: Project, ctx: OpContext): string {
     const prev = p.words[i - 1];
     if (prev && w.start - prev.end >= 0.5) lines.push(`(pause ${(w.start - prev.end).toFixed(1)} s)`);
     const tw = timed.get(w.id);
-    const where = p.cuts[w.id] ? `CUT:${p.cuts[w.id]}` : tw ? `@${(tw.startMs / 1000).toFixed(2)}` : "CUT:range";
+    // Sound events are not in the timeline's word list; place them by their source time instead.
+    const evAt = w.kind === "audio_event" ? sourceToOutput(t, w.start) : null;
+    const where = p.cuts[w.id] ? `CUT:${p.cuts[w.id]}` : tw ? `@${(tw.startMs / 1000).toFixed(2)}` : evAt !== null ? `@${evAt.toFixed(2)}` : "CUT:range";
     const label = w.kind === "audio_event" ? `[sound: ${w.text}]` : w.text;
     lines.push(`${w.id} ${w.start.toFixed(2)} ${where} ${label}${emphasis.has(w.id) ? " *" : ""}`);
   });

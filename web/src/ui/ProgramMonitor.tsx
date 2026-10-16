@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Player } from "@remotion/player";
 import { renderStillOnWeb } from "@remotion/web-renderer";
 import { EditVideo } from "../../../src/remotion/EditVideo";
+import { preloadFonts } from "../../../src/remotion/fonts";
 import { FORMATS, FPS, type EditVideoProps, type Item } from "../../../src/shared/project";
 import { makeText } from "../../../src/shared/presets";
 import { beginGesture, commit, get, player, seek, set, useEditor } from "../lib/store";
@@ -75,7 +76,8 @@ export function ProgramMonitor() {
     return { left: r.left - host.left, top: r.top - host.top, width: r.width, height: r.height };
   };
   const selected = project.items.find((i) => i.id === selectedId) ?? null;
-  const selRect = selected && ["text", "shape", "media"].includes(selected.type) ? rectOf(selected.id) : null;
+  // Measuring forces a layout, so the selection box is only drawn while paused (it would lag a frame anyway).
+  const selRect = !playing && selected && ["text", "shape", "media"].includes(selected.type) ? rectOf(selected.id) : null;
 
   const hitTest = (x: number, y: number): string | null => {
     const host = surface.current;
@@ -167,6 +169,7 @@ export function ProgramMonitor() {
   };
 
   const exportFrame = async () => {
+    await preloadFonts(project);
     const still = await renderStillOnWeb({
       composition: { component: EditVideo, durationInFrames: timeline.durationInFrames, fps: FPS, width: fmt.width, height: fmt.height, id: "still", defaultProps: inputProps },
       inputProps,
@@ -178,6 +181,7 @@ export function ProgramMonitor() {
     a.href = URL.createObjectURL(blob);
     a.download = `${project.name} ${tc(frame / FPS).replace(/:/g, "-")}.png`;
     a.click();
+    window.setTimeout(() => URL.revokeObjectURL(a.href), 60_000);
   };
 
   const busy = project.status === "transcribing" || project.status === "planning" || project.status === "importing";

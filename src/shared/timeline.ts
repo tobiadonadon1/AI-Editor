@@ -238,14 +238,17 @@ export interface PlacedItem {
   end: number;
 }
 
-export function placeItems(items: Item[], t: Timeline): PlacedItem[] {
+// Layers that now start after the end (the edit got shorter) are left out of the video rather than
+// bunched into the last frames. Editing views pass keepPastEnd to still show them at the end, so they can be found.
+export function placeItems(items: Item[], t: Timeline, keepPastEnd = false): PlacedItem[] {
   const total = durationSec(t);
   return items
     .map((item) => {
-      const start = Math.min(itemStart(item, t), Math.max(0, total - 0.1));
+      const at = itemStart(item, t);
+      const start = keepPastEnd ? Math.min(at, Math.max(0, total - 0.1)) : at;
       // Music runs to the end unless trimmed shorter.
       const end = Math.min(total, start + Math.max(0.1, item.duration));
       return { item, start, end };
     })
-    .filter((p) => p.end > p.start);
+    .filter((p) => p.start < total && p.end > p.start);
 }

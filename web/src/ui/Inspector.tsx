@@ -41,7 +41,7 @@ export function editItem<T extends Item>(id: string, fn: (it: T) => void, key?: 
 
 function Timing({ item }: { item: Item }) {
   const timeline = useEditor((s) => s.timeline)!;
-  const p = placeItems([item], timeline)[0];
+  const p = placeItems([item], timeline, true)[0];
   const word = item.anchorWord ? get().project?.words.find((w) => w.id === item.anchorWord) : null;
   return (
     <Section title="Timing">
@@ -148,7 +148,7 @@ function EffectControls() {
             <Select label="Fit" value={item.fit} options={[{ value: "cover", label: "Fill frame" }, { value: "contain", label: "Fit inside" }, { value: "pip", label: "Picture in picture" }]} onChange={(v) => editItem<typeof item>(item.id, (it) => void (it.fit = v))} />
           </Row>
           <Row label="Volume">
-            <HotNumber value={item.volume} digits={1} min={-60} max={6} unit=" dB" label="Volume" onChange={(v) => editItem<typeof item>(item.id, (it) => void (it.volume = v), "vol")} />
+            <HotNumber value={item.volume} digits={1} min={-60} max={0} unit=" dB" label="Volume" onChange={(v) => editItem<typeof item>(item.id, (it) => void (it.volume = v), "vol")} />
           </Row>
           <Check label="Slow zoom (Ken Burns)" checked={item.kenBurns} onChange={(v) => editItem<typeof item>(item.id, (it) => void (it.kenBurns = v))} />
         </Section>
@@ -173,7 +173,7 @@ function EffectControls() {
             </button>
           </Row>
           <Row label="Level">
-            <HotNumber value={item.volume} digits={1} min={-40} max={6} unit=" dB" label="Level" onChange={(v) => editItem<typeof item>(item.id, (it) => void (it.volume = v), "vol")} />
+            <HotNumber value={item.volume} digits={1} min={-40} max={0} unit=" dB" label="Level" onChange={(v) => editItem<typeof item>(item.id, (it) => void (it.volume = v), "vol")} />
           </Row>
         </Section>
       )}
@@ -233,7 +233,7 @@ function MasterControls({ project, clip, timelineClip }: { project: Project; cli
         <SliderRow label="Opacity" value={v.opacity} min={0} max={100} digits={0} neutral={100} unit="%" onChange={(x) => setV({ opacity: x }, "o")} />
       </Section>
       <Section title="Volume" fx>
-        <SliderRow label="Level" value={v.volume} min={-60} max={12} step={0.5} digits={1} neutral={0} unit=" dB" onChange={(x) => setV({ volume: x }, "vol")} />
+        <SliderRow label="Level" value={v.volume} min={-60} max={0} step={0.5} digits={1} neutral={0} unit=" dB" onChange={(x) => setV({ volume: x }, "vol")} />
       </Section>
       {!project.items.length && <Empty>Select a layer on the timeline or in the Program monitor to see its controls.</Empty>}
     </div>
@@ -398,7 +398,7 @@ function EssentialSound() {
   return (
     <div className="ec">
       <Section title="Dialogue">
-        <SliderRow label="Clip volume" value={project.video.volume} min={-60} max={12} step={0.5} digits={1} unit=" dB" onChange={(v) => commit((d) => void (d.video.volume = v), "dvol")} />
+        <SliderRow label="Clip volume" value={project.video.volume} min={-60} max={0} step={0.5} digits={1} unit=" dB" onChange={(v) => commit((d) => void (d.video.volume = v), "dvol")} />
         <SliderRow label="Trim silences over" value={project.settings.maxPauseSec} min={0.1} max={1.5} step={0.05} digits={2} neutral={0.35} unit=" s" onChange={(v) => commit((d) => void (d.settings.maxPauseSec = v), "pause")} />
       </Section>
       <Section title="Music">

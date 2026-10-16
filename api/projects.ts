@@ -1,6 +1,6 @@
 import { del, list } from "@vercel/blob";
 import { createClient } from "@supabase/supabase-js";
-import { authorize, hasDatabase, hasStorage, json, userPrefix } from "./_lib/server.js";
+import { authorize, hasDatabase, hasStorage, json, readJson, userPrefix } from "./_lib/server.js";
 
 // Projects live in Supabase (table public.projects, see supabase/migrations); their media in Vercel Blob
 // under u/<user>/media/<project>/. Only this server touches the table, always filtered to the signed-in user.
@@ -23,7 +23,10 @@ async function session(req: Request) {
   return { userId: user.userId, id: new URL(req.url).searchParams.get("id") };
 }
 
-const failed = (what: string, e: { message: string }) => json({ error: `Could not ${what}: ${e.message}` }, 502);
+const failed = (what: string, e: { message: string }) => {
+  console.error(what, e.message);
+  return json({ error: `Could not ${what}. Try again in a moment.` }, 502);
+};
 
 export async function GET(req: Request) {
   const s = await session(req);
@@ -43,9 +46,15 @@ export async function PUT(req: Request) {
   const s = await session(req);
   if (s instanceof Response) return s;
   if (!validId(s.id)) return json({ error: "Bad project id" }, 400);
-  const body = (await req.json().catch(() => null)) as { project?: { id?: string }; summary?: Summary } | null;
+  const body = await readJson<{ project?: { id?: string }; summary?: Summary }>(req);
   if (!body?.project || body.project.id !== s.id || !body.summary) return json({ error: "Expected { project, summary }" }, 400);
   const { name, format, durationSec, updatedAt } = body.summary;
+  if (typeof updatedAt !== "string" || Number.isNaN(Date.parse(updatedAt))) return json({ error: "Bad updatedAt" }, 400);
+  // Never replace a newer copy (saved from another device) with an older one.
+  const current = await db().from("projects").select("updated_at").eq("user_id", s.userId).eq("id", s.id).maybeSingle();
+  if (current.error) return failed("save the project", current.error);
+  if (current.data && Date.parse(current.data.updated_at) > Date.parse(updatedAt))
+    return json({ error: "A newer version of this project was saved from another device.", code: "conflict" }, 409);
   const { error } = await db()
     .from("projects")
     .upsert({ user_id: s.userId, id: s.id, name, format, duration_sec: durationSec, updated_at: updatedAt, data: body.project }, { onConflict: "user_id,id" });

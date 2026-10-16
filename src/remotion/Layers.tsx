@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { AbsoluteFill, continueRender, delayRender, useCurrentFrame, useVideoConfig } from "remotion";
+import { useEffect, useMemo, useState } from "react";
+import { AbsoluteFill, useCurrentFrame, useDelayRender, useVideoConfig } from "remotion";
 import type { ShapeItem, TextItem } from "../shared/project";
 import { animState, combine, inOut, type AnimState } from "./anim";
 import { font } from "./fonts";
@@ -19,16 +19,20 @@ export function parseRich(text: string): { text: string; accent: boolean }[][] {
 
 // Text is measured with a canvas so a layer can shrink until every word fits inside the frame.
 let measureCtx: CanvasRenderingContext2D | null | undefined;
-function measure(text: string, spec: string): number {
+export function measure(text: string, spec: string): number {
   if (measureCtx === undefined) measureCtx = typeof document === "undefined" ? null : document.createElement("canvas").getContext("2d");
   if (!measureCtx) return text.length * 55; // rough width at 100px
   measureCtx.font = spec;
   return measureCtx.measureText(text).width;
 }
 
-// Re-measures once the web font has arrived; rendering waits for it.
-function useFontReady(spec: string) {
-  const [ready, setReady] = useState(() => typeof document === "undefined" || document.fonts.check(spec));
+// Re-measures once the web font has arrived. useDelayRender (not the global delayRender) is what both
+// the Player and the in-browser export wait on, so no frame is captured with fallback metrics.
+export function useFontReady(spec: string) {
+  const { delayRender, continueRender } = useDelayRender();
+  const check = () => typeof document === "undefined" || document.fonts.check(spec);
+  const [readyFor, setReadyFor] = useState<string | null>(() => (check() ? spec : null));
+  const ready = readyFor === spec || check();
   useEffect(() => {
     if (ready) return;
     let live = true;
@@ -38,12 +42,13 @@ function useFontReady(spec: string) {
       if (open) continueRender(handle);
       open = false;
     };
-    document.fonts.load(spec).then(() => live && setReady(true), () => live && setReady(true)).finally(done);
+    const finish = () => live && setReadyFor(spec);
+    document.fonts.load(spec).then(finish, finish).finally(done);
     return () => {
       live = false;
       done();
     };
-  }, [spec, ready]);
+  }, [spec, ready, delayRender, continueRender]);
   return ready;
 }
 
@@ -138,8 +143,8 @@ export const TextLayer: React.FC<{ item: TextItem; duration: number }> = ({ item
   const s = item.style;
   const family = font(s.font, s.italic);
   const fontReady = useFontReady(`${s.italic ? "italic " : ""}${s.weight} 100px "${family}"`);
-  const fit = fitText(item, family, width, height, k);
-  void fontReady; // measuring again after the font loads is what this re-render is for
+  // Measured once per change, not per frame; fontReady re-measures when the real font arrives.
+  const fit = useMemo(() => fitText(item, family, width, height, k), [item.text, item.style, item.width, item.x, item.y, item.preset, family, width, height, k, fontReady]); // eslint-disable-line react-hooks/exhaustive-deps
   const labelled = isNumberWithLabel(item);
   const typing = item.animIn === "typewriter" || item.animIn === "words";
   // Typing reveals take longer than a simple entrance.
@@ -198,25 +203,32 @@ export const TextLayer: React.FC<{ item: TextItem; duration: number }> = ({ item
           {lines.map((line, li) => (
             <div key={li} style={labelled && li > 0 ? { fontSize: `${LABEL_SCALE}em`, marginTop: "0.25em", WebkitTextStroke: s.strokeWidth ? `${s.strokeWidth * 2 * k * LABEL_SCALE}px ${s.strokeColor}` : undefined } : undefined}>
               {line.map((run, ri) => {
-                let shown = run.text;
+                // Unrevealed text keeps its space (hidden, not removed), so lines never reflow while it types on.
+                let body: React.ReactNode = run.text;
                 if (item.animIn === "typewriter" && reveal < 1) {
-                  shown = run.text.slice(0, Math.max(0, charBudget));
+                  const n = Math.max(0, Math.min(run.text.length, charBudget));
                   charBudget -= run.text.length;
+                  body = (
+                    <>
+                      {run.text.slice(0, n)}
+                      <span style={{ visibility: "hidden" }}>{run.text.slice(n)}</span>
+                    </>
+                  );
                 } else if (item.animIn === "words" && reveal < 1) {
-                  const words = run.text.split(/(\s+)/);
-                  let out = "";
-                  for (const w of words) {
-                    if (/^\s+$/.test(w)) out += w;
-                    else if (wordBudget > 0) {
-                      out += w;
-                      wordBudget--;
-                    } else out += w.replace(/./g, " ");
-                  }
-                  shown = out;
+                  body = run.text.split(/(\s+)/).map((w, wi) => {
+                    if (!w || /^\s+$/.test(w)) return w;
+                    const visible = wordBudget > 0;
+                    wordBudget--;
+                    return visible ? w : (
+                      <span key={wi} style={{ visibility: "hidden" }}>
+                        {w}
+                      </span>
+                    );
+                  });
                 }
                 return (
                   <span key={ri} style={{ color: run.accent ? s.accentColor : undefined }}>
-                    {shown}
+                    {body}
                   </span>
                 );
               })}

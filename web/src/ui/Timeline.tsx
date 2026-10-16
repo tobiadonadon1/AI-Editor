@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { FPS, LANES, mainAsset, uid, type Item } from "../../../src/shared/project";
 import { cutPoints, durationSec, outputToSource, placeItems, type PlacedItem } from "../../../src/shared/timeline";
 import { describeItem } from "../../../src/shared/ops";
@@ -35,8 +35,6 @@ function niceStep(pps: number) {
 export function Timeline() {
   const project = useEditor((s) => s.project)!;
   const timeline = useEditor((s) => s.timeline)!;
-  const frame = useEditor((s) => s.frame);
-  const playing = useEditor((s) => s.playing);
   const pps = useEditor((s) => s.pxPerSec);
   const tool = useEditor((s) => s.tool);
   const selectedItem = useEditor((s) => s.selectedItem);
@@ -49,7 +47,7 @@ export function Timeline() {
 
   const total = durationSec(timeline);
   const asset = mainAsset(project);
-  const placed = useMemo(() => placeItems(project.items, timeline), [project.items, timeline]);
+  const placed = useMemo(() => placeItems(project.items, timeline, true), [project.items, timeline]);
   const byLane = useMemo(() => {
     const m = new Map<string, PlacedItem[]>();
     for (const p of placed) {
@@ -62,15 +60,8 @@ export function Timeline() {
   const laneHeight = (id: string) => LANE_H[id] ?? Math.max(1, ...[...(rows.get(id)?.values() ?? [])].map((r) => r + 1)) * ROW + 2;
   const width = Math.max(total * pps + 240, (scroller.current?.clientWidth ?? 800) - HEAD);
   const x = (sec: number) => sec * pps;
-  const playX = x(frame / FPS);
 
-  // Keep the playhead in view while playing (page by page).
-  useEffect(() => {
-    const el = scroller.current;
-    if (!el || !playing) return;
-    const view = el.clientWidth - HEAD;
-    if (playX < el.scrollLeft || playX > el.scrollLeft + view - 40) el.scrollLeft = Math.max(0, playX - 40);
-  }, [playX, playing]);
+  // The tracks do not re-render on every frame; only the playhead and timecode below do.
 
   // Ctrl/Cmd + wheel zooms around the cursor.
   useEffect(() => {
@@ -96,7 +87,7 @@ export function Timeline() {
 
   const snapTo = (sec: number, skip?: string) => {
     if (!snap) return sec;
-    const candidates = [...snapTargets, frame / FPS];
+    const candidates = [...snapTargets, get().frame / FPS];
     let best = sec;
     let bestD = 8 / pps;
     for (const c of candidates) {
@@ -226,7 +217,7 @@ export function Timeline() {
           <div className="tl-content" style={{ width: width + HEAD }}>
             <div className="tl-ruler-row">
               <div className="tl-corner">
-                <span className="tc tc-big">{tc(frame / FPS)}</span>
+                <NowTimecode />
                 <div className="tl-toggles">
                   <button type="button" className={`icon-btn sm${snap ? " on" : ""}`} title="Snap in Timeline (S)" onClick={() => setSnap(!snap)}>
                     <Icon name="magnet" size={14} />
@@ -250,7 +241,7 @@ export function Timeline() {
                   <i key={c} className="ruler-cut" style={{ left: x(c) }} />
                 ))}
                 <i className="ruler-end" style={{ left: x(total) }} />
-                <span className="playhead-head" style={{ left: playX }} />
+                <Playhead className="playhead-head" offset={0} pps={pps} scroller={scroller} follow />
               </div>
             </div>
 
@@ -357,7 +348,7 @@ export function Timeline() {
               );
             })}
 
-            <div className="playhead" style={{ left: HEAD + playX }} />
+            <Playhead className="playhead" offset={HEAD} pps={pps} />
           </div>
         </div>
         <div className="tl-zoombar">
@@ -395,7 +386,26 @@ function itemLabel(item: Item) {
   }
 }
 
-function Filmstrip({ assetId, thumbs, from, to, width }: { assetId?: string; thumbs: Record<string, { every: number; frames: string[] }>; from: number; to: number; width: number }) {
+function NowTimecode() {
+  const frame = useEditor((s) => s.frame);
+  return <span className="tc tc-big">{tc(frame / FPS)}</span>;
+}
+
+// The playhead subscribes to the frame by itself; the head also keeps itself in view while playing.
+function Playhead({ className, offset, pps, scroller, follow }: { className: string; offset: number; pps: number; scroller?: React.RefObject<HTMLDivElement | null>; follow?: boolean }) {
+  const frame = useEditor((s) => s.frame);
+  const playing = useEditor((s) => s.playing);
+  const playX = (frame / FPS) * pps;
+  useEffect(() => {
+    const el = scroller?.current;
+    if (!follow || !el || !playing) return;
+    const view = el.clientWidth - HEAD;
+    if (playX < el.scrollLeft || playX > el.scrollLeft + view - 40) el.scrollLeft = Math.max(0, playX - 40);
+  }, [playX, playing, follow, scroller]);
+  return className === "playhead" ? <div className={className} style={{ left: offset + playX }} /> : <span className={className} style={{ left: offset + playX }} />;
+}
+
+const Filmstrip = memo(function Filmstrip({ assetId, thumbs, from, to, width }: { assetId?: string; thumbs: Record<string, { every: number; frames: string[] }>; from: number; to: number; width: number }) {
   const t = assetId ? thumbs[assetId] : undefined;
   if (!t || !t.frames.length || width < 8) return null;
   const tileW = 30;
@@ -409,9 +419,9 @@ function Filmstrip({ assetId, thumbs, from, to, width }: { assetId?: string; thu
       {tiles.map((src, i) => (src ? <img key={i} src={src} alt="" draggable={false} /> : <i key={i} />))}
     </span>
   );
-}
+});
 
-function Wave({ peaks, from, to, width, height }: { peaks?: number[]; from: number; to: number; width: number; height: number }) {
+const Wave = memo(function Wave({ peaks, from, to, width, height }: { peaks?: number[]; from: number; to: number; width: number; height: number }) {
   if (!peaks || width < 4) return null;
   const n = Math.max(2, Math.floor(width / 2));
   const mid = height / 2;
@@ -429,4 +439,4 @@ function Wave({ peaks, from, to, width, height }: { peaks?: number[]; from: numb
       <path d={d} />
     </svg>
   );
-}
+});

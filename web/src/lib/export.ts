@@ -1,5 +1,6 @@
 import { renderMediaOnWeb } from "@remotion/web-renderer";
 import { EditVideo } from "../../../src/remotion/EditVideo";
+import { preloadFonts } from "../../../src/remotion/fonts";
 import { FORMATS, FPS, type EditVideoProps, type Project } from "../../../src/shared/project";
 import { buildTimeline } from "../../../src/shared/timeline";
 import { mainAsset } from "../../../src/shared/project";
@@ -25,6 +26,7 @@ export async function exportMp4(
   const t = buildTimeline(project, mainAsset(project)?.durationSec ?? 0, FPS);
   const t0 = performance.now();
   const inputProps: EditVideoProps = { project, media, sfx };
+  await preloadFonts(project);
   const res = await renderMediaOnWeb({
     composition: { component: EditVideo, durationInFrames: t.durationInFrames, fps: FPS, width: f.width, height: f.height, id: "edit", defaultProps: inputProps },
     inputProps,

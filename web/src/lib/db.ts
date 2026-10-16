@@ -9,7 +9,7 @@ let opened: Promise<IDBDatabase> | null = null;
 export function selectDatabase(userId: string | null) {
   const next = userId ? `ai-editor:${userId}` : "ai-editor";
   if (next === name) return;
-  void opened?.then((d) => d.close());
+  void opened?.then((d) => d.close()).catch(() => undefined);
   name = next;
   opened = null;
 }
@@ -25,6 +25,8 @@ function db(): Promise<IDBDatabase> {
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
   });
+  // A failed open is not cached, so the next call tries again.
+  opened.catch(() => (opened = null));
   return opened;
 }
 
@@ -32,10 +34,12 @@ function tx<T>(store: string, mode: IDBTransactionMode, run: (s: IDBObjectStore)
   return db().then(
     (d) =>
       new Promise<T>((resolve, reject) => {
+        // Resolve only once the transaction commits: a full disk aborts it after the request "succeeded".
         const t = d.transaction(store, mode);
         const req = run(t.objectStore(store));
-        req.onsuccess = () => resolve(req.result);
-        req.onerror = () => reject(req.error);
+        t.oncomplete = () => resolve(req.result);
+        t.onabort = () => reject(t.error ?? req.error ?? new Error("Storage write aborted"));
+        t.onerror = () => reject(t.error ?? req.error);
       }),
   );
 }

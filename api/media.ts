@@ -7,7 +7,7 @@ export async function POST(req: Request) {
   const user = await authorize(req);
   if (user instanceof Response) return user;
   const body = (await req.json().catch(() => null)) as { paths?: unknown[] } | null;
-  const paths = (body?.paths ?? []).slice(0, 50);
+  const paths = (Array.isArray(body?.paths) ? body.paths : []).slice(0, 50);
   if (!paths.every((p) => ownPath(user.userId, p))) return json({ error: "That file is not yours." }, 403);
   const validUntil = Date.now() + 6 * 3600_000;
   const urls: Record<string, string> = {};

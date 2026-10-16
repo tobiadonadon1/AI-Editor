@@ -3,7 +3,6 @@ import { UserButton } from "@clerk/react";
 import { FORMATS, FPS, mainAsset, type FormatId, type Project } from "../../../src/shared/project";
 import { buildTimeline } from "../../../src/shared/timeline";
 import { store } from "../lib/db";
-import { createSample } from "../lib/store";
 import { api, auth, type Health } from "../lib/api";
 import { cloud, deleteProject as deleteFromCloud, listProjects as listCloud, type Summary } from "../lib/cloud";
 import { Icon, Mark } from "./Icons";
@@ -42,6 +41,7 @@ export function Home() {
   const [cloudError, setCloudError] = useState<string | undefined>();
   const [health, setHealth] = useState<Health | null>(null);
   const [busy, setBusy] = useState(false);
+  const [sampleError, setSampleError] = useState<string | null>(null);
   const [confirm, setConfirm] = useState<string | null>(null);
 
   const reload = () =>
@@ -57,8 +57,12 @@ export function Home() {
   const sample = async () => {
     setBusy(true);
     try {
+      const { createSample } = await import("../lib/store");
       const p = await createSample();
       location.hash = `#/p/${p.id}`;
+    } catch (e) {
+      setCloudError(undefined);
+      setSampleError(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
     }
@@ -110,7 +114,13 @@ export function Home() {
           </p>
         )}
         {cloudError && <p className="banner">Could not load the projects saved in your account: {cloudError}</p>}
-        {projects === null ? null : projects.length === 0 ? (
+        {sampleError && <p className="banner">Could not open the sample: {sampleError}</p>}
+        {projects === null ? (
+          <div className="home-empty">
+            <span className="spinner" aria-hidden />
+            <p className="fine">Loading your projects…</p>
+          </div>
+        ) : projects.length === 0 ? (
           <div className="home-empty">
             <p>No projects yet.</p>
             <p className="fine">Start a new project from your own footage, or open the sample to see a finished AI edit you can change.</p>

@@ -27,6 +27,12 @@ try {
   const project = { id: "p-e2e", name: "E2E", format: "9:16", updatedAt: new Date().toISOString(), assets: [] };
   const put = await fetch(`${B}/api/projects?id=p-e2e`, { method: "PUT", headers: { ...H, "Content-Type": "application/json" }, body: JSON.stringify({ project, summary: { id: "p-e2e", name: "E2E", format: "9:16", updatedAt: project.updatedAt, durationSec: 12.5 } }) });
   console.log("save:", put.status, (await put.text()).slice(0, 160));
+  // An older copy (a device that was offline) must not overwrite the newer one.
+  const stale = { ...project, updatedAt: new Date(Date.now() - 60_000).toISOString() };
+  const old = await fetch(`${B}/api/projects?id=p-e2e`, { method: "PUT", headers: { ...H, "Content-Type": "application/json" }, body: JSON.stringify({ project: stale, summary: { id: "p-e2e", name: "E2E", format: "9:16", updatedAt: stale.updatedAt, durationSec: 12.5 } }) });
+  console.log("stale save refused:", old.status === 409, old.status);
+  const outside = await fetch(`${B}/api/upload`, { method: "POST", headers: { ...H, "Content-Type": "application/json" }, body: JSON.stringify({ type: "blob.generate-client-token", payload: { pathname: path.replace("/media/", "/other/"), callbackUrl: "", clientPayload: null, multipart: false } }) });
+  console.log("upload outside media/ refused:", outside.status === 400, outside.status);
   const list = await fetch(`${B}/api/projects`, { headers: H });
   console.log("list:", list.status, (await list.text()).slice(0, 200));
   const one = await fetch(`${B}/api/projects?id=p-e2e`, { headers: H });

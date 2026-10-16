@@ -9,10 +9,14 @@
     <meta name="description" content="A professional video editor you can talk to: describe the cut, the colour, the titles and the animation, and it lands on a real timeline." />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <style>
+      html, body { margin: 0; background: #0b0b0b; }
+      .boot { height: 100vh; display: flex; align-items: center; justify-content: center; }
+    </style>
   </head>
   <body>
     <noscript>AI Editor needs JavaScript to run.</noscript>
-    <div id="root"></div>
+    <div id="root"><div class="boot"><img src="/favicon.svg" width="36" height="36" alt="" /></div></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

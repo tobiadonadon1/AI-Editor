@@ -1,12 +1,15 @@
-import { useEffect, useState, type ReactNode } from "react";
-import { ClerkLoading, ClerkProvider, Show, SignIn, useAuth } from "@clerk/react";
+import { Component, lazy, Suspense, useEffect, useState, type ReactNode } from "react";
+import { ClerkDegraded, ClerkFailed, ClerkLoading, ClerkProvider, Show, SignIn, useAuth } from "@clerk/react";
 import { Home } from "./ui/Home";
-import { NewProject } from "./ui/NewProject";
-import { Editor } from "./ui/Editor";
 import { Mark } from "./ui/Icons";
+import { Splash } from "./ui/Splash";
 import { api, auth } from "./lib/api";
 import { cloud } from "./lib/cloud";
 import { selectDatabase } from "./lib/db";
+
+// The editor and its video engine load on demand, so sign-in and the project list appear quickly.
+const Editor = lazy(() => import("./ui/Editor").then((m) => ({ default: m.Editor })));
+const NewProject = lazy(() => import("./ui/NewProject").then((m) => ({ default: m.NewProject })));
 
 type Route = { page: "home" } | { page: "new" } | { page: "editor"; id: string };
 
@@ -25,9 +28,47 @@ function Routes() {
     window.addEventListener("hashchange", on);
     return () => window.removeEventListener("hashchange", on);
   }, []);
-  if (route.page === "editor") return <Editor key={route.id} id={route.id} />;
-  if (route.page === "new") return <NewProject />;
-  return <Home />;
+  return (
+    <Suspense fallback={<Splash label="Loading the editor…" />}>
+      {route.page === "editor" ? <Editor key={route.id} id={route.id} /> : route.page === "new" ? <NewProject /> : <Home />}
+    </Suspense>
+  );
+}
+
+// A crash in any panel shows a way out instead of an empty page.
+export class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
+  state = { error: null as Error | null };
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+  componentDidCatch(error: Error) {
+    console.error("[AI Editor] crashed", error);
+  }
+  render() {
+    if (!this.state.error) return this.props.children;
+    return (
+      <div className="center-note">
+        <Mark size={36} />
+        <span>Something went wrong: {this.state.error.message}</span>
+        <span className="fine">Your work is saved. Reload to continue.</span>
+        <span className="row-gap">
+          <button type="button" className="btn btn-primary" onClick={() => location.reload()}>
+            Reload
+          </button>
+          <button
+            type="button"
+            className="btn btn-quiet"
+            onClick={() => {
+              location.hash = "#/";
+              location.reload();
+            }}
+          >
+            Back to projects
+          </button>
+        </span>
+      </div>
+    );
+  }
 }
 
 const PUBLISHABLE_KEY: string | undefined = import.meta.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY ?? import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
@@ -70,10 +111,24 @@ export function App() {
       </Session>
     );
   return (
-    <ClerkProvider publishableKey={PUBLISHABLE_KEY} appearance={appearance} localization={localization}>
+    // After signing in Clerk goes to these URLs; a hash on the same page means no second full page load.
+    <ClerkProvider
+      publishableKey={PUBLISHABLE_KEY}
+      appearance={appearance}
+      localization={localization}
+      signInFallbackRedirectUrl="/#/"
+      signUpFallbackRedirectUrl="/#/"
+      afterSignOutUrl="/"
+    >
       <ClerkLoading>
-        <div className="center-note">Loading…</div>
+        <Splash label="Loading…" />
       </ClerkLoading>
+      <ClerkFailed>
+        <SignInUnavailable />
+      </ClerkFailed>
+      <ClerkDegraded>
+        <SignInUnavailable />
+      </ClerkDegraded>
       <Show when="signed-out">
         <SignInScreen />
       </Show>
@@ -93,6 +148,19 @@ function SignedInSession() {
   );
 }
 
+function SignInUnavailable() {
+  return (
+    <div className="center-note">
+      <Mark size={36} />
+      <span>Sign-in could not load.</span>
+      <span className="fine">A browser extension or the network may be blocking it. Check the connection, then reload.</span>
+      <button type="button" className="btn btn-primary" onClick={() => location.reload()}>
+        Reload
+      </button>
+    </div>
+  );
+}
+
 // Points local storage and cloud sync at the account before anything loads a project.
 function Session({ userId, children }: { userId: string | null; children: ReactNode }) {
   const [ready, setReady] = useState<string | null>(null);
@@ -101,14 +169,17 @@ function Session({ userId, children }: { userId: string | null; children: ReactN
     let live = true;
     selectDatabase(userId === "local" ? null : userId);
     void api.health(true).then((h) => {
-      cloud.configure(userId, h.storage);
-      if (live) setReady(userId);
+      if (!live) return;
+      // If the server could not be reached, a signed-in session still assumes the account is there;
+      // the calls that need it report their own errors.
+      cloud.configure(userId, h.storage || (h.unreachable === true && auth.enabled));
+      setReady(userId);
     });
     return () => {
       live = false;
     };
   }, [userId]);
-  if (!userId || ready !== userId) return <div className="center-note">Loading your projects…</div>;
+  if (!userId || ready !== userId) return <Splash label="Loading your projects…" />;
   return <>{children}</>;
 }
 

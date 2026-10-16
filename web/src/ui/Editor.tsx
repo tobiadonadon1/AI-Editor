@@ -3,10 +3,11 @@ import { FORMATS, FORMAT_IDS, FPS, mainAsset, uid, type FormatId } from "../../.
 import { makeText } from "../../../src/shared/presets";
 import { cutPoints, outputToSource } from "../../../src/shared/timeline";
 import { UserButton } from "@clerk/react";
-import { commit, flushCloud, get, importFiles, openProject, patchProject, player, redo, resume, seek, set, undo, useEditor, type Tool, type Workspace } from "../lib/store";
+import { closeProject, commit, flushCloud, get, importFiles, openProject, patchProject, player, redo, resume, seek, set, undo, useEditor, type Tool, type Workspace } from "../lib/store";
 import { pending } from "./NewProject";
 import { auth } from "../lib/api";
 import { Icon, Mark } from "./Icons";
+import { Splash } from "./Splash";
 import { Splitter, useSize, tc } from "./controls";
 import { ProgramMonitor } from "./ProgramMonitor";
 import { Timeline, fitZoom } from "./Timeline";
@@ -57,7 +58,7 @@ export function Editor({ id }: { id: string }) {
     return () => {
       window.removeEventListener("pagehide", leave);
       document.removeEventListener("visibilitychange", hidden);
-      leave();
+      closeProject(id);
     };
   }, [id]);
 
@@ -73,7 +74,7 @@ export function Editor({ id }: { id: string }) {
       </div>
     );
   }
-  if (!project || project.id !== id) return <div className="center-note">Opening project…</div>;
+  if (!project || project.id !== id) return <Splash label="Opening project…" />;
 
   return (
     <div className="app">
