@@ -26,6 +26,8 @@ export interface MediaAsset {
   size: number;
   proxy?: boolean; // a lighter editing copy was made in the browser
   cloud?: string; // where the edit copy is stored for this account (a Blob path, or a site URL for the sample)
+  role?: "animation"; // a ready-made animation from the creator (kept as is: no proxy, so transparency survives)
+  note?: string; // the creator's note on where to use it
 }
 
 export type WordKind = "word" | "audio_event";
@@ -306,6 +308,29 @@ export interface SfxItem extends ItemBase {
   volume: number; // dB
 }
 
+// A motion graphic on its own track. It starts as a placeholder (a description of what it should show) and
+// becomes a real animation when the animation API returns one, or when the creator drops in a file.
+export const ANIMATION_STATUSES = ["placeholder", "generating", "ready", "failed"] as const;
+export type AnimationStatus = (typeof ANIMATION_STATUSES)[number];
+
+export interface AnimationItem extends ItemBase {
+  type: "animation";
+  prompt: string; // what the animation shows, sent to the animation API
+  status: AnimationStatus;
+  assetId?: string; // the finished animation
+  job?: { id: string; provider: string; startedAt: string; assetId: string }; // assetId: where the result will be kept
+  error?: string;
+  fit: "overlay" | "fullscreen";
+  x: number; // centre, 0..100 of frame width (overlay)
+  y: number;
+  width: number; // 0..100 of frame width (overlay)
+  aspect: number; // width / height of the box while it is a placeholder
+  opacity: number;
+  trimStart: number;
+  animIn: Anim;
+  animOut: Anim;
+}
+
 export interface MusicItem extends ItemBase {
   type: "music";
   assetId: string;
@@ -316,14 +341,15 @@ export interface MusicItem extends ItemBase {
   fadeOut: number;
 }
 
-export type Item = TextItem | ShapeItem | MediaItem | AdjustItem | TransitionItem | SfxItem | MusicItem;
+export type Item = TextItem | ShapeItem | MediaItem | AdjustItem | TransitionItem | SfxItem | MusicItem | AnimationItem;
 export type ItemType = Item["type"];
 
 // Lanes, top to bottom, as the timeline shows them. Each item type has its own lane.
 export const LANES: { id: string; label: string; name: string; types: ItemType[]; kind: "video" | "audio" | "captions" }[] = [
   { id: "C1", label: "C1", name: "Captions", types: [], kind: "captions" },
-  { id: "V6", label: "V6", name: "Transitions", types: ["transition"], kind: "video" },
-  { id: "V5", label: "V5", name: "Text", types: ["text"], kind: "video" },
+  { id: "V7", label: "V7", name: "Transitions", types: ["transition"], kind: "video" },
+  { id: "V6", label: "V6", name: "Text", types: ["text"], kind: "video" },
+  { id: "V5", label: "V5", name: "Animations", types: ["animation"], kind: "video" },
   { id: "V4", label: "V4", name: "Graphics", types: ["shape"], kind: "video" },
   { id: "V3", label: "V3", name: "Adjustment", types: ["adjust"], kind: "video" },
   { id: "V2", label: "V2", name: "B-roll", types: ["media"], kind: "video" },
@@ -333,7 +359,22 @@ export const LANES: { id: string; label: string; name: string; types: ItemType[]
   { id: "A3", label: "A3", name: "SFX", types: ["sfx"], kind: "audio" },
 ];
 
-export type ProjectStatus = "empty" | "importing" | "transcribing" | "planning" | "ready" | "error";
+// "setup": created, and the creator is still adding the video and choosing options before the first cut.
+export type ProjectStatus = "setup" | "empty" | "importing" | "transcribing" | "planning" | "ready" | "error";
+
+export const STYLE_IDS = ["auto", "ugc-ad", "educational", "podcast", "product-demo", "hormozi", "cinematic-vlog"] as const;
+export type StyleId = (typeof STYLE_IDS)[number];
+
+// What the creator chose in the setup steps. The first cut follows these; the captions choice is enforced.
+export interface SetupOptions {
+  style: StyleId;
+  captions: { enabled: boolean; preset: CaptionPresetId | null }; // null = let the AI pick
+  ownAnimations: boolean;
+  generateAnimations: boolean;
+  instructions: string;
+}
+
+export const DEFAULT_SETUP: SetupOptions = { style: "auto", captions: { enabled: true, preset: null }, ownAnimations: false, generateAnimations: false, instructions: "" };
 
 export interface ChangeNote {
   op: string;
@@ -377,6 +418,7 @@ export interface Project {
   items: Item[];
   chat: ChatMessage[];
   summary?: string;
+  setup?: SetupOptions;
 }
 
 export const DEFAULT_SETTINGS: EditSettings = { maxPauseSec: 0.35, padBeforeSec: 0.08, padAfterSec: 0.14 };
@@ -464,6 +506,7 @@ export interface EditVideoProps {
   project: Project;
   media: Record<string, string>; // asset id -> URL
   sfx: Record<string, string>; // sound id -> URL
+  placeholders?: boolean; // draw empty animation placeholders (the editor's monitor, never the export)
   [key: string]: unknown;
 }
 

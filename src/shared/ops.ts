@@ -17,6 +17,7 @@ import {
   mainAsset,
   uid,
   type AdjustItem,
+  type AnimationItem,
   type Anim,
   type CaptionStyle,
   type ChangeNote,
@@ -36,7 +37,7 @@ import {
   type TextStyle,
   type TransitionItem,
 } from "./project.js";
-import { CAPTION_PRESETS, captionPreset, makeShape, makeText, resolveGrade } from "./presets.js";
+import { CAPTION_PRESETS, captionPreset, fullBrief, makeShape, makeText, resolveGrade } from "./presets.js";
 import { buildTimeline, cutPoints, durationSec, itemStart, outputToSource, placeItems, sourceToOutput, wordOutputTime, type Timeline } from "./timeline.js";
 
 export interface Op {
@@ -47,6 +48,7 @@ export interface Op {
 export interface OpContext {
   playhead: number; // output seconds
   selectedItemId?: string | null;
+  allowLists?: boolean; // the creator asked for numbered or bulleted text, so markers like "01" are kept
 }
 
 // ---------- tool definitions (JSON Schema, sent to Claude) ----------
@@ -278,6 +280,25 @@ export const EDIT_TOOLS = [
     },
   },
   {
+    name: "add_animation",
+    description:
+      "Add an animation layer (its own track, above graphics). Either place one of the creator's ready-made animations (asset_id of a media item marked ANIMATION), or add a placeholder: a prompt describing the motion graphic, which the animation service then generates. Use for things that are clearer animated: a process, a comparison, a product feature, a logo sting. Never over the face; overlays stay out of the caption zone.",
+    input_schema: {
+      type: "object",
+      properties: {
+        asset_id: str("A ready-made animation from the media list"),
+        prompt: str("For a placeholder: what the animation shows, concretely, in one or two sentences (subject, motion, colours). No on-screen numbering."),
+        ...timing,
+        fit: enm(["overlay", "fullscreen"], "overlay = a graphic over the video (default), fullscreen = a cutaway that fills the frame"),
+        x: num("Centre x 0-100 (overlay)"),
+        y: num("Centre y 0-100 (overlay)"),
+        width: num("Width 0-100 of frame width (overlay), default 60"),
+        anim_in: enm(ANIMS, "Entrance"),
+        anim_out: enm(ANIMS, "Exit"),
+      },
+    },
+  },
+  {
     name: "set_music",
     description: "Use an imported audio file as the music bed for the whole edit, or remove it.",
     input_schema: {
@@ -362,6 +383,8 @@ export const EDIT_TOOLS = [
         grade: { type: "object", properties: gradeProps },
         effects: { type: "object", properties: effectProps },
         hidden: bool("Hide without deleting"),
+        prompt: str("New description for an animation placeholder"),
+        fit: enm(["overlay", "fullscreen"], "Animation fit"),
       },
       required: ["id"],
     },
@@ -371,7 +394,7 @@ export const EDIT_TOOLS = [
     description: "Delete layers by id, or every layer of a type.",
     input_schema: {
       type: "object",
-      properties: { ids: { type: "array", items: { type: "string" } }, type: enm(["text", "shape", "media", "adjust", "transition", "sfx", "music"], "Remove all layers of this type") },
+      properties: { ids: { type: "array", items: { type: "string" } }, type: enm(["text", "shape", "media", "animation", "adjust", "transition", "sfx", "music"], "Remove all layers of this type") },
     },
   },
   {
@@ -613,8 +636,9 @@ const HANDLERS: Record<string, (c: Ctx, input: In) => void> = {
   add_text(c, i) {
     if (!isStr(i.text) || !i.text.trim()) throw new Error("text missing");
     const preset = oneOf(i.preset, TEXT_PRESET_IDS) ?? "callout";
+    const text = c.ctx.allowLists ? i.text.replace(/\\n/g, "\n") : withoutListMarkers(i.text.replace(/\\n/g, "\n"));
     const at = resolveStart(c, i);
-    const item = makeText(preset, i.text.replace(/\\n/g, "\n"), at.start);
+    const item = makeText(preset, text, at.start);
     item.style = { ...item.style, ...houseStyle(c.p, preset) };
     Object.assign(item, at);
     item.duration = resolveDuration(c, i, at.start, item.duration);
@@ -690,6 +714,35 @@ const HANDLERS: Record<string, (c: Ctx, input: In) => void> = {
     else at = remap(c, at);
     addSfxAt(c, sound, at, volume, anchor);
     c.notes.push({ op: "sfx", text: `${sound} at ${fmt(at)}` });
+  },
+  add_animation(c, i) {
+    const asset = isStr(i.asset_id) ? c.p.assets.find((a) => a.id === i.asset_id) : undefined;
+    if (isStr(i.asset_id) && (!asset || asset.kind === "audio")) throw new Error(`unknown animation ${i.asset_id}`);
+    const prompt = isStr(i.prompt) ? i.prompt.trim().slice(0, 600) : "";
+    if (!asset && !prompt) throw new Error("give an asset_id or a prompt");
+    const at = resolveStart(c, i);
+    const fit = oneOf(i.fit, ["overlay", "fullscreen"] as const) ?? "overlay";
+    const fallback = asset ? (asset.kind === "image" ? 2.5 : asset.durationSec) : 3;
+    const item: AnimationItem = {
+      id: uid("an"),
+      type: "animation",
+      ...at,
+      duration: Math.min(resolveDuration(c, i, at.start, fallback), asset?.kind === "video" ? asset.durationSec : 30),
+      prompt: prompt || asset!.note || asset!.name,
+      status: asset ? "ready" : "placeholder",
+      assetId: asset?.id,
+      fit,
+      x: isNum(i.x) ? clamp(i.x, 0, 100) : 50,
+      y: isNum(i.y) ? clamp(i.y, 0, 100) : 40,
+      width: isNum(i.width) ? clamp(i.width, 10, 100) : 60,
+      aspect: asset && asset.width && asset.height ? asset.width / asset.height : 1,
+      opacity: 100,
+      trimStart: 0,
+      animIn: anim(i.anim_in) ?? (fit === "fullscreen" ? "fade" : "pop"),
+      animOut: anim(i.anim_out) ?? "fade",
+    };
+    c.p.items.push(item);
+    c.notes.push({ op: "animation", text: asset ? `Animation “${asset.name}” at ${fmt(item.start)}` : `Animation placeholder at ${fmt(item.start)}: “${prompt.length > 60 ? `${prompt.slice(0, 58)}…` : prompt}”` });
   },
   add_broll(c, i) {
     const asset = c.p.assets.find((a) => a.id === i.asset_id);
@@ -792,7 +845,7 @@ const HANDLERS: Record<string, (c: Ctx, input: In) => void> = {
     if (typeof i.hidden === "boolean") item.hidden = i.hidden;
     switch (item.type) {
       case "text":
-        if (isStr(i.text)) item.text = i.text.replace(/\\n/g, "\n");
+        if (isStr(i.text)) item.text = c.ctx.allowLists ? i.text.replace(/\\n/g, "\n") : withoutListMarkers(i.text.replace(/\\n/g, "\n"));
         if (oneOf(i.preset, TEXT_PRESET_IDS)) {
           const fresh = makeText(i.preset as TextItem["preset"], item.text, item.start);
           Object.assign(item, { preset: fresh.preset, style: fresh.style, x: fresh.x, y: fresh.y, width: fresh.width, animIn: fresh.animIn, animOut: fresh.animOut });
@@ -829,6 +882,14 @@ const HANDLERS: Record<string, (c: Ctx, input: In) => void> = {
       case "music":
         if (isNum(i.volume_db)) item.volume = clamp(i.volume_db, -60, 0);
         break;
+      case "animation":
+        for (const k of ["x", "y", "opacity"] as const) if (isNum(i[k])) item[k] = clamp(i[k] as number, 0, 100);
+        if (isNum(i.width)) item.width = clamp(i.width, 10, 100);
+        if (isStr(i.prompt) && i.prompt.trim()) item.prompt = i.prompt.trim().slice(0, 600);
+        item.fit = oneOf(i.fit, ["overlay", "fullscreen"] as const) ?? item.fit;
+        item.animIn = anim(i.anim_in) ?? item.animIn;
+        item.animOut = anim(i.anim_out) ?? item.animOut;
+        break;
     }
     c.notes.push({ op: "update", text: `Updated ${describeItem(item)}` });
   },
@@ -843,6 +904,27 @@ const HANDLERS: Record<string, (c: Ctx, input: In) => void> = {
     if (isStr(i.name) && i.name.trim()) c.p.name = i.name.trim().slice(0, 80);
   },
 };
+
+// On-screen text is not a slide deck: list markers ("01", "1.", "Step 2", "#3", "•") are taken off, and a
+// layer that would only show a step number is refused. Real figures ("3x", "+38%", "$49") are untouched.
+const BULLET = "[•·▪●○◦■►▶➤→✓✔☑]";
+const ORDINAL = String.raw`(?:0\d|#\s?\d{1,2}|\d{1,2}\s*[.)]|(?:step|tip|point|part|rule|passo|punto|parte|regola)\s*#?\d{1,2}\s*[.:)]?)`;
+const MARKER_LINE = new RegExp(String.raw`^\s*\*?\s*(?:${ORDINAL}|${BULLET}|-)\s*\*?\s*[:.\-–—]?\s*$`, "i");
+const MARKER_PREFIX = new RegExp(String.raw`^(\s*\*?)\s*(?:${ORDINAL}|${BULLET}|-)\s*\*?\s*[:\-–—]?\s+(?=\S)`, "i");
+export function withoutListMarkers(text: string): string {
+  const lines = text.split("\n");
+  const kept = lines.filter((l) => !MARKER_LINE.test(l));
+  if (!kept.some((l) => l.replace(/[*\s]/g, ""))) throw new Error("on-screen numbering and bullet points are not used; show a real figure or a short phrase instead");
+  return kept
+    .map((l) => {
+      const m = l.match(MARKER_PREFIX);
+      if (!m) return l;
+      // "*01* Start" -> "Start"; an asterisk that opened an accent span before the marker stays open.
+      const stars = m[0].match(/\*/g)?.length ?? 0;
+      return `${stars % 2 === 1 ? "*" : ""}${l.slice(m[0].length)}`;
+    })
+    .join("\n");
+}
 
 // One typographic system per video: titles, numbers and the rest take the font (and, for titles, the whole
 // look) of the video's first title, unless the request sets a style explicitly.
@@ -916,6 +998,8 @@ export function describeItem(item: Item): string {
       return `${item.sound} sound`;
     case "music":
       return "music";
+    case "animation":
+      return `animation “${item.prompt.slice(0, 40)}”`;
   }
 }
 
@@ -957,11 +1041,13 @@ export function describeForAI(p: Project, ctx: OpContext): string {
   lines.push(`Format: ${p.format}. Raw length ${src.toFixed(1)} s, current edit ${durationSec(t).toFixed(1)} s, ${t.clips.length} clips.`);
   lines.push(`Playhead: ${ctx.playhead.toFixed(2)} s${ctx.selectedItemId ? `. Selected layer: ${ctx.selectedItemId}` : ""}.`);
   lines.push(`Pacing: pauses over ${p.settings.maxPauseSec} s are trimmed.`);
-  lines.push(`Brief: ${p.brief.trim() || "(none)"}`);
+  lines.push(`Brief: ${fullBrief(p).trim() || "(none)"}`);
 
   lines.push("\nMedia:");
   for (const a of p.assets) {
-    lines.push(`- ${a.id} ${a.kind}${a.id === p.mainAssetId ? " (MAIN VIDEO)" : ""} "${a.name}" ${a.kind !== "image" ? `${a.durationSec.toFixed(1)} s` : ""} ${a.width}x${a.height}`);
+    lines.push(
+      `- ${a.id} ${a.kind}${a.id === p.mainAssetId ? " (MAIN VIDEO)" : ""}${a.role === "animation" ? " ANIMATION" : ""} "${a.name}" ${a.kind !== "image" ? `${a.durationSec.toFixed(1)} s` : ""} ${a.width}x${a.height}${a.note ? ` note: ${JSON.stringify(a.note)}` : ""}`,
+    );
   }
 
   const g = resolveGrade(p.grade);
@@ -989,6 +1075,8 @@ export function describeForAI(p: Project, ctx: OpContext): string {
             ? ` shape=${item.shape} color=${item.color} x=${item.x} y=${item.y}`
             : item.type === "media"
               ? ` asset=${item.assetId} fit=${item.fit}`
+              : item.type === "animation"
+                ? ` ${item.status}${item.assetId ? ` asset=${item.assetId}` : ""} fit=${item.fit} x=${item.x} y=${item.y} width=${item.width} prompt=${JSON.stringify(item.prompt)}`
               : item.type === "transition"
                 ? ` kind=${item.kind}`
                 : item.type === "sfx"

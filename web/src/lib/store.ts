@@ -1,8 +1,9 @@
 import { useSyncExternalStore } from "react";
 import type { PlayerRef } from "@remotion/player";
-import { FPS, mainAsset, newProject, uid, type ChatMessage, type FormatId, type Item, type MediaAsset, type Project, type SfxId, type Word } from "../../../src/shared/project";
+import { DEFAULT_SETUP, FORMATS, FPS, mainAsset, newProject, uid, type AnimationItem, type CaptionStyle, type ChatMessage, type FormatId, type Item, type MediaAsset, type Project, type SetupOptions, type SfxId, type TextItem, type Word } from "../../../src/shared/project";
+import { captionPreset, fullBrief } from "../../../src/shared/presets";
 import { applyOps, describeForAI, type Op } from "../../../src/shared/ops";
-import { buildTimeline, durationSec, placeItems, type Timeline } from "../../../src/shared/timeline";
+import { buildTimeline, durationSec, itemStart, placeItems, type Timeline } from "../../../src/shared/timeline";
 import { store as db } from "./db";
 import { frames, imageThumb, kindOf, makeProxy, monoAudio, needsProxy, peaks, probe, wavChunks } from "./media";
 import { api, ApiError } from "./api";
@@ -270,6 +271,8 @@ export async function openProject(id: string) {
   for (const a of project.assets) if (!a.cloud && cloud.on) void backUp(project.id, a);
   // A tab closed mid-import leaves the project half-done: resume where it stopped.
   if (project.status === "transcribing" || project.status === "planning" || project.status === "importing") void resume();
+  // Animations that were still being made when the tab closed.
+  for (const it of project.items) if (it.type === "animation" && it.status === "generating" && it.job) void pollAnimation(project.id, it.id);
 }
 
 // Leaving the editor sends unsaved changes and frees the media held in memory.
@@ -371,7 +374,7 @@ async function backUp(projectId: string, a: MediaAsset) {
 
 // ---------- importing ----------
 
-export async function importFiles(files: File[], opts: { asMain?: boolean } = {}): Promise<MediaAsset[]> {
+export async function importFiles(files: File[], opts: { asMain?: boolean; role?: "animation" } = {}): Promise<MediaAsset[]> {
   const added: MediaAsset[] = [];
   const projectId = state.project?.id;
   if (!projectId) return added;
@@ -384,10 +387,12 @@ export async function importFiles(files: File[], opts: { asMain?: boolean } = {}
     const t = task(`Importing ${file.name}`);
     try {
       const info = await probe(file, kind);
-      const asset: MediaAsset = { id: uid("m"), name: file.name.replace(/\.[^.]+$/, ""), kind, durationSec: info.durationSec, width: info.width, height: info.height, hasAudio: info.hasAudio, size: file.size };
+      const asset: MediaAsset = { id: uid("m"), name: file.name.replace(/\.[^.]+$/, ""), kind, durationSec: info.durationSec, width: info.width, height: info.height, hasAudio: info.hasAudio, size: file.size, ...(opts.role ? { role: opts.role } : {}) };
+      if (opts.role === "animation" && kind === "audio") throw new Error(`${file.name} is audio; animations are video or image files.`);
       await db.putMedia(asset.id, file);
       let url = URL.createObjectURL(file);
-      if (kind === "video" && needsProxy(info)) {
+      // Animations are used as they are: a proxy would flatten a transparent background.
+      if (kind === "video" && needsProxy(info) && opts.role !== "animation") {
         t.progress(0, `Creating proxy for ${file.name}`);
         try {
           const proxy = await makeProxy(file, info, (v) => t.progress(v));
@@ -406,7 +411,7 @@ export async function importFiles(files: File[], opts: { asMain?: boolean } = {}
       if (here) set((s) => ({ media: { ...s.media, [asset.id]: url } }));
       else URL.revokeObjectURL(url);
       await updateProject(projectId, (cur) => {
-        const isMain = (opts.asMain || !cur.mainAssetId) && kind === "video";
+        const isMain = (opts.asMain || !cur.mainAssetId) && kind === "video" && opts.role !== "animation";
         return { ...cur, assets: [...cur.assets, asset], mainAssetId: isMain ? asset.id : cur.mainAssetId };
       });
       if (here) void loadVisuals(asset);
@@ -505,13 +510,17 @@ export async function ask(prompt: string, mode: "first_cut" | "edit" = "edit") {
   pushChat(reply);
   set({ assistantBusy: true });
   aborter = new AbortController();
-  const ctx = { playhead: playheadSec(), selectedItemId: state.selectedItem };
+  // Numbered or bulleted text only when the creator asks for it in so many words.
+  const asked = mode === "edit" ? prompt : (p.setup?.instructions ?? p.brief);
+  const ctx = { playhead: playheadSec(), selectedItemId: state.selectedItem, allowLists: LIST_WORDS.test(asked) };
   try {
     const res = await api.assistant({ mode, prompt, state: describeForAI(state.project!, ctx), frames: await aiFrames(), history }, aborter.signal);
     const here = state.project?.id === p.id;
     const before = here ? state.project! : await db.getProject(p.id);
     if (!before) return;
-    const { project: next, notes, errors } = applyOps(before, res.ops as Op[], ctx);
+    const { project: applied, notes, errors } = applyOps(before, res.ops as Op[], ctx);
+    const next = mode === "first_cut" && applied.setup ? { ...applied, captions: chosenCaptions(applied.captions, applied.setup) } : applied;
+    const fresh = next.items.filter((it): it is AnimationItem => it.type === "animation" && it.status === "placeholder" && !before.items.some((b) => b.id === it.id));
     if (errors.length) console.warn("AI operations skipped:", errors);
     const skipped = errors.length ? [{ op: "skipped", text: `${errors.length} change${errors.length === 1 ? "" : "s"} could not be applied` }] : [];
     const text = res.truncated ? `${res.message}\n\nThe edit was too long to finish in one go; ask me to continue for the rest.` : res.message;
@@ -524,6 +533,8 @@ export async function ask(prompt: string, mode: "first_cut" | "edit" = "edit") {
       }
       setProject({ ...next, ...finished, chat: done(before.chat) });
     } else await updateProject(p.id, () => ({ ...next, ...finished, chat: done(before.chat) }));
+    // Placeholders the AI just added go to the animation service straight away.
+    for (const it of fresh) void generateAnimation(it.id, p.id);
   } catch (e) {
     const aborted = e instanceof DOMException && e.name === "AbortError";
     const fail = { pending: false, error: !aborted, text: aborted ? "Stopped." : e instanceof Error ? e.message : String(e) };
@@ -554,18 +565,126 @@ export async function resume() {
       if (!ok) return;
     }
     status({ status: "planning", statusDetail: "AI first cut" });
-    await ask(state.project!.brief, "first_cut");
+    await ask(fullBrief(state.project!), "first_cut");
   } catch {
     /* status already shows the error */
   }
 }
 
+const LIST_WORDS = /\b(numbers?|numbered|numera\w*|numeri|steps?|passi|list|lista|elenco|bullets?|punti|punto elenco|checklist)\b/i;
+
+// The captions the creator picked during setup win over the first cut's choice.
+function chosenCaptions(c: CaptionStyle, s: SetupOptions): CaptionStyle {
+  if (!s.captions.enabled) return { ...c, enabled: false };
+  if (s.captions.preset && c.preset !== s.captions.preset) return { ...captionPreset(s.captions.preset, c), enabled: true };
+  return { ...c, enabled: true };
+}
+
+// ---------- animations ----------
+
+const polling = new Set<string>();
+export const isPolling = (itemId: string) => polling.has(itemId);
+const sleep = (ms: number) => new Promise((r) => window.setTimeout(r, ms));
+
+function patchAnimation(projectId: string, itemId: string, patch: Partial<AnimationItem>) {
+  return updateProject(projectId, (p) => ({ ...p, items: p.items.map((it) => (it.id === itemId && it.type === "animation" ? { ...it, ...patch } : it)) }));
+}
+
+// Sends a placeholder to the animation API (or the built-in mock) and waits for the finished file.
+export async function generateAnimation(itemId: string, projectId = state.project?.id) {
+  const p = projectId === state.project?.id ? state.project : projectId ? await db.getProject(projectId) : null;
+  const item = p?.items.find((it): it is AnimationItem => it.id === itemId && it.type === "animation");
+  if (!p || !item || polling.has(itemId)) return;
+  const f = FORMATS[p.format];
+  const full = item.fit === "fullscreen";
+  const width = full ? f.width : Math.round((f.width * item.width) / 100);
+  const height = full ? f.height : Math.round(width / (item.aspect || 1));
+  const t = timelineOf(p);
+  const start = itemStart(item, t);
+  const said = t.words.filter((w) => w.startMs / 1000 >= start - 0.5 && w.startMs / 1000 <= start + item.duration).map((w) => w.text).join(" ");
+  const lead = p.items.find((it): it is TextItem => it.type === "text" && ["hook", "title"].includes(it.preset));
+  polling.add(itemId); // counts as in progress from the first request, not just while polling
+  await patchAnimation(p.id, itemId, { status: "generating", error: undefined });
+  try {
+    const res = await api.createAnimation({
+      prompt: item.prompt,
+      durationSec: Math.round(item.duration * 100) / 100,
+      width,
+      height,
+      fps: FPS,
+      fit: item.fit,
+      format: p.format,
+      style: lead ? { font: lead.style.font, color: lead.style.color, accentColor: lead.style.accentColor } : undefined,
+      context: said,
+      projectId: p.id,
+      layerId: itemId,
+    });
+    if (res.status === "failed") throw new Error(res.error ?? "The animation service could not make this animation.");
+    await patchAnimation(p.id, itemId, { job: { ...res.job, startedAt: new Date().toISOString(), assetId: uid("m") } });
+    polling.delete(itemId);
+    await pollAnimation(p.id, itemId);
+  } catch (e) {
+    polling.delete(itemId);
+    await patchAnimation(p.id, itemId, { status: "failed", error: e instanceof Error ? e.message : String(e) });
+  }
+}
+
+export async function pollAnimation(projectId: string, itemId: string) {
+  if (polling.has(itemId)) return;
+  polling.add(itemId);
+  try {
+    for (let tries = 0; ; tries++) {
+      // Stop when the project is closed; opening it again picks the job up.
+      if (state.project?.id !== projectId) return;
+      const item = state.project.items.find((it): it is AnimationItem => it.id === itemId && it.type === "animation");
+      if (!item?.job || item.status !== "generating") return;
+      if (Date.now() - Date.parse(item.job.startedAt) > 15 * 60_000) throw new Error("The animation service did not finish within 15 minutes.");
+      await sleep(tries === 0 ? 1500 : 2500);
+      const res = await api.pollAnimation(item.job, projectId, item.job.assetId).catch((e) => {
+        if (e instanceof ApiError && (e.code === "timeout" || e.code === "offline" || e.code === "502")) return { status: "processing" as const };
+        throw e;
+      });
+      if (res.status === "failed") throw new Error(res.error ?? "The animation service could not make this animation.");
+      if (res.status !== "ready") continue;
+      const where = res.path ?? res.url;
+      if (!where) throw new Error("The animation service sent no file.");
+      const blob = await cloudApi.downloadMedia(where, () => {});
+      await attachAnimation(projectId, itemId, blob, { id: item.job.assetId, name: `Animation · ${item.prompt.slice(0, 40)}`, cloud: res.path ?? (where.startsWith("/") ? where : undefined) });
+      return;
+    }
+  } catch (e) {
+    await patchAnimation(projectId, itemId, { status: "failed", error: e instanceof Error ? e.message : String(e) });
+  } finally {
+    polling.delete(itemId);
+  }
+}
+
+// A finished animation (from the service, or a file the creator drops on the placeholder) fills the layer.
+export async function attachAnimation(projectId: string, itemId: string, blob: Blob, meta: { id?: string; name: string; cloud?: string }) {
+  const kind = blob.type.startsWith("image/") ? "image" : "video";
+  const info = await probe(blob, kind);
+  const asset: MediaAsset = { id: meta.id ?? uid("m"), name: meta.name, kind, durationSec: info.durationSec, width: info.width, height: info.height, hasAudio: info.hasAudio, size: blob.size, role: "animation", ...(meta.cloud ? { cloud: meta.cloud } : {}) };
+  await db.putMedia(asset.id, blob);
+  if (state.project?.id === projectId) set((s) => ({ media: { ...s.media, [asset.id]: URL.createObjectURL(blob) } }));
+  await updateProject(projectId, (p) => ({
+    ...p,
+    assets: [...p.assets.filter((a) => a.id !== asset.id), asset],
+    items: p.items.map((it) =>
+      it.id === itemId && it.type === "animation"
+        ? { ...it, assetId: asset.id, status: "ready" as const, job: undefined, error: undefined, aspect: asset.width && asset.height ? asset.width / asset.height : it.aspect, duration: asset.kind === "video" && asset.durationSec ? Math.min(it.duration, asset.durationSec) : it.duration }
+        : it,
+    ),
+  }));
+  if (cloud.on && !asset.cloud) void backUp(projectId, asset);
+}
+
 // ---------- creating ----------
 
-export async function createProject(opts: { name: string; brief: string; format: FormatId; files: File[] }) {
-  const p = newProject(uid("p"), opts.name, opts.brief, opts.format);
-  p.status = "importing";
-  p.statusDetail = "Importing media";
+// A project starts in setup: the creator adds the video and picks the options, then the first cut runs.
+export async function createProject(opts: { name: string; format: FormatId }) {
+  const p = newProject(uid("p"), opts.name, "", opts.format);
+  p.status = "setup";
+  p.setup = structuredClone(DEFAULT_SETUP);
   await db.putProject(p);
   if (cloud.on) void cloudApi.saveProject(p).catch(() => {});
   return p;
@@ -594,11 +713,8 @@ export async function createSample(format: FormatId = "9:16") {
     { name: "set_color", input: { temperature: 12, contrast: 14, vibrance: 18, look: "warm-film", look_intensity: 45, vignette: 18 } },
     { name: "add_text", input: { text: "3 ways to edit *faster*", preset: "hook", start_word: "w6", duration_sec: 2.3, anim_in: "pop", sfx: "whoosh" } },
     { name: "add_zoom", input: { start_word: "w6", duration_sec: 2.3, scale: 1.12, style: "push", focus_y: 40 } },
-    { name: "add_text", input: { text: "*01*", preset: "number", start_word: "w19", duration_sec: 1.3, position: "upper", sfx: "pop" } },
     { name: "add_zoom", input: { start_word: "w25", end_word: "w28", scale: 1.2, style: "punch" } },
-    { name: "add_text", input: { text: "*02*", preset: "number", start_word: "w29", duration_sec: 1.3, position: "upper", sfx: "pop" } },
     { name: "add_text", input: { text: "AI picks the *key words*", preset: "callout", start_word: "w36", duration_sec: 1.6, y: 30 } },
-    { name: "add_text", input: { text: "*03*", preset: "number", start_word: "w43", duration_sec: 1.3, position: "upper", sfx: "pop" } },
     { name: "add_zoom", input: { start_word: "w52", end_word: "w57", scale: 1.25, style: "smooth" } },
     { name: "add_transition", input: { kind: "whip", at_word: "w43", duration_sec: 0.3 } },
     { name: "add_sfx", input: { sound: "whoosh", on: "transitions", volume_db: -8 } },
@@ -610,7 +726,7 @@ export async function createSample(format: FormatId = "9:16") {
       id: uid("c"),
       role: "assistant",
       at: new Date().toISOString(),
-      text: "This sample was edited with the same operations the AI uses: the false start and the repeated take are cut, pauses are tightened, and it has a hook, numbered beats, punch-in zooms, captions with key words and a warm grade. Ask for any change below, or edit it by hand.",
+      text: "This sample was edited with the same operations the AI uses: the false start and the repeated take are cut, pauses are tightened, and it has a hook, a callout, punch-in zooms, captions with key words and a warm grade. Ask for any change below, or edit it by hand.",
       changes: notes,
     },
   ];

@@ -6,6 +6,7 @@
   "outputDirectory": "web/dist",
   "functions": {
     "api/assistant.ts": { "maxDuration": 300 },
-    "api/transcribe.ts": { "maxDuration": 120 }
+    "api/transcribe.ts": { "maxDuration": 120 },
+    "api/animations.ts": { "maxDuration": 180 }
   }
 }

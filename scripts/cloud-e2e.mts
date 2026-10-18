@@ -33,6 +33,12 @@ try {
   console.log("stale save refused:", old.status === 409, old.status);
   const outside = await fetch(`${B}/api/upload`, { method: "POST", headers: { ...H, "Content-Type": "application/json" }, body: JSON.stringify({ type: "blob.generate-client-token", payload: { pathname: path.replace("/media/", "/other/"), callbackUrl: "", clientPayload: null, multipart: false } }) });
   console.log("upload outside media/ refused:", outside.status === 400, outside.status);
+  const anim = await (await fetch(`${B}/api/animations`, { method: "POST", headers: { ...H, "Content-Type": "application/json" }, body: JSON.stringify({ prompt: "e2e ring", durationSec: 2, width: 400, height: 400, fps: 30 }) })).json();
+  console.log("animation job:", anim.job?.provider, anim.status);
+  await new Promise((r) => setTimeout(r, 4500));
+  const done = await (await fetch(`${B}/api/animations?${new URLSearchParams({ id: anim.job.id, provider: anim.job.provider, project: "p-e2e", asset: "m-anim" })}`, { headers: H })).json();
+  console.log("animation ready:", done.status, done.url ?? done.path);
+  console.log("animations need sign-in:", (await fetch(`${B}/api/animations`, { method: "POST", body: "{}" })).status);
   const list = await fetch(`${B}/api/projects`, { headers: H });
   console.log("list:", list.status, (await list.text()).slice(0, 200));
   const one = await fetch(`${B}/api/projects?id=p-e2e`, { headers: H });

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { FPS, LOOK_IDS, SFX_IDS, TEXT_PRESET_IDS, TRANSITIONS, uid, type AdjustItem, type Effects, type MediaAsset, type Motion } from "../../../src/shared/project";
+import { FPS, LOOK_IDS, SFX_IDS, TEXT_PRESET_IDS, TRANSITIONS, uid, type AdjustItem, type AnimationItem, type Effects, type MediaAsset, type Motion } from "../../../src/shared/project";
 import { LOOKS, TEXT_PRESETS, makeText } from "../../../src/shared/presets";
 import { cutPoints } from "../../../src/shared/timeline";
 import { commit, get, importFiles, resume, set, useEditor } from "../lib/store";
@@ -40,6 +40,12 @@ function Bin() {
         d.items = d.items.filter((i) => i.type !== "music");
         d.items.push({ id: uid("mu"), type: "music", assetId: a.id, start: 0, duration: total, trimStart: 0, volume: -18, duck: true, fadeIn: 0.5, fadeOut: 1.5 });
       });
+      return;
+    }
+    if (a.role === "animation") {
+      const item: AnimationItem = { id: uid("an"), type: "animation", start: t, duration: a.kind === "image" ? 2.5 : a.durationSec, prompt: a.note || a.name, status: "ready", assetId: a.id, fit: "overlay", x: 50, y: 40, width: 60, aspect: a.width && a.height ? a.width / a.height : 1, opacity: 100, trimStart: 0, animIn: "pop", animOut: "fade" };
+      commit((d) => void d.items.push(item));
+      set({ selectedItem: item.id });
       return;
     }
     const id = uid("m");
@@ -91,7 +97,7 @@ function Bin() {
               <span className="bin-name">
                 {a.name}
                 <span className="bin-meta">
-                  {a.id === project.mainAssetId ? "Main · " : ""}
+                  {a.id === project.mainAssetId ? "Main · " : a.role === "animation" ? "Animation · " : ""}
                   {a.kind !== "audio" ? `${a.width}×${a.height} · ` : ""}
                   {fmtSize(a.size)}
                   {a.proxy ? " · proxy" : ""}

@@ -77,3 +77,5 @@ export function claude(req?: Request): { client: Anthropic; model: string; direc
 }
 
 export const hasTranscription = () => Boolean(process.env.ELEVENLABS_API_KEY);
+// The animation service named by ANIMATION_API_URL, or the built-in mock used for testing.
+export const animationProvider = (): "api" | "mock" => (process.env.ANIMATION_API_URL ? "api" : "mock");

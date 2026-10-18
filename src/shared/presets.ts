@@ -7,6 +7,8 @@ import {
   type CaptionStyle,
   type Grade,
   type LookId,
+  type Project,
+  type StyleId,
   type Shape,
   type ShapeItem,
   type TextItem,
@@ -122,10 +124,10 @@ export const TEXT_PRESETS: Record<
   "lower-third": { label: "Lower third", hint: "Name and role", sample: "Alex Rivera\nFounder, Northwind", style: { font: "Inter", size: 52, weight: 700, align: "left", background: "rgba(10,10,12,0.82)", padding: 28, radius: 10, shadow: false, accentColor: "#4CC9F0" }, x: 36, y: 80, width: 60, animIn: "slide-right", animOut: "slide-left", duration: 3.5 },
   callout: { label: "Callout", hint: "Short keyword pop-up", sample: "*+38%* sales", style: { size: 88, weight: 900, background: "#FFE14D", color: "#111111", accentColor: "#E11D48", padding: 22, radius: 18, shadow: true }, x: 50, y: 38, width: 70, animIn: "bounce", animOut: "scale", duration: 1.6 },
   "headline-bar": { label: "Headline bar", hint: "Full-width news strip", sample: "BREAKING: we cut 40% of the fluff", style: { font: "Oswald", size: 60, weight: 700, uppercase: true, background: "#E11D48", padding: 22, radius: 0, shadow: false }, x: 50, y: 14, width: 100, animIn: "wipe", animOut: "fade", duration: 3 },
-  number: { label: "Big number", hint: "Stat or step number", sample: "*01*", style: { font: "Anton", size: 260, weight: 400, strokeWidth: 0, accentColor: "#FFE14D" }, x: 50, y: 34, width: 60, animIn: "scale", animOut: "fade", duration: 1.8 },
+  number: { label: "Big number", hint: "A figure from the speech", sample: "*3x*", style: { font: "Anton", size: 260, weight: 400, strokeWidth: 0, accentColor: "#FFE14D" }, x: 50, y: 34, width: 60, animIn: "scale", animOut: "fade", duration: 1.8 },
   quote: { label: "Quote", hint: "Pull quote in serif", sample: "“Make it *simple*.”", style: { font: "Playfair Display", size: 84, weight: 700, italic: true, shadow: true }, x: 50, y: 46, width: 82, animIn: "words", animOut: "fade", duration: 3.2 },
   cta: { label: "Call to action", hint: "End card button", sample: "Link in bio →", style: { font: "Poppins", size: 72, weight: 800, background: "#FFFFFF", color: "#111111", padding: 30, radius: 999, shadow: true }, x: 50, y: 78, width: 74, animIn: "pop", animOut: "fade", duration: 3 },
-  label: { label: "Label", hint: "Small tag", sample: "STEP 2", style: { font: "Space Grotesk", size: 44, weight: 700, uppercase: true, letterSpacing: 12, background: "rgba(0,0,0,0.6)", padding: 14, radius: 8, shadow: false }, x: 50, y: 18, width: 50, animIn: "slide-down", animOut: "fade", duration: 2 },
+  label: { label: "Label", hint: "Small tag", sample: "NEW", style: { font: "Space Grotesk", size: 44, weight: 700, uppercase: true, letterSpacing: 12, background: "rgba(0,0,0,0.6)", padding: 14, radius: 8, shadow: false }, x: 50, y: 18, width: 50, animIn: "slide-down", animOut: "fade", duration: 2 },
   "subtitle-box": { label: "Subtitle box", hint: "Plain sentence on a box", sample: "Here is what nobody tells you", style: { font: "Inter", size: 58, weight: 600, background: "rgba(0,0,0,0.65)", padding: 20, radius: 12, shadow: false }, x: 50, y: 64, width: 84, animIn: "fade", animOut: "fade", duration: 2.5 },
 };
 
@@ -187,4 +189,39 @@ export function makeShape(shape: Shape, start: number, duration: number, opts: P
     animOut: "fade",
     ...opts,
   };
+}
+
+// Editing styles offered when a project is set up. The text goes to the AI as part of the brief.
+export const STYLES: Record<StyleId, { label: string; hint: string; text: string }> = {
+  auto: { label: "Let the AI decide", hint: "Reads the footage and picks", text: "" },
+  "ugc-ad": { label: "UGC ad", hint: "Hook, fast, CTA", text: "Direct-response UGC ad: strong hook in the first second, fast pacing, bold captions with key words, punch-in zooms, product benefits as short callouts, and a clear call to action at the end." },
+  educational: { label: "Educational", hint: "Calm and clear", text: "Educational explainer: clear and calm pacing, clean captions, one hook title naming the topic, a callout only for a key figure or term, subtle zooms." },
+  podcast: { label: "Podcast clip", hint: "Best 30-60 s", text: "Podcast clip: keep the best 30-60 seconds, cut filler, karaoke captions, a hook title naming the topic, light warm grade." },
+  "product-demo": { label: "Product demo", hint: "Features, clean look", text: "Product demo: tight cuts, callouts for features, clean bright look, lower third with the product name, CTA at the end." },
+  hormozi: { label: "Hormozi style", hint: "Very fast, bold caps", text: "Hormozi style: very fast, no pauses, 2-word captions in big bold caps with green and yellow key words, constant punch-ins, pops on keywords." },
+  "cinematic-vlog": { label: "Cinematic vlog", hint: "Relaxed, filmic", text: "Cinematic vlog: relaxed pacing, teal and orange look with grain, minimal captions, elegant serif title at the start." },
+};
+
+// Everything the creator chose during setup, written as the brief for the first cut (and later turns).
+export function fullBrief(p: Project): string {
+  const s = p.setup;
+  if (!s) return p.brief;
+  const parts: string[] = [];
+  if (s.instructions.trim()) parts.push(`Creator's instructions: ${s.instructions.trim()}`);
+  if (s.style !== "auto") parts.push(`Style: ${STYLES[s.style].label}. ${STYLES[s.style].text}`);
+  parts.push(
+    !s.captions.enabled
+      ? "Captions: off. The creator does not want captions; do not turn them on."
+      : s.captions.preset
+        ? `Captions: on, preset ${s.captions.preset}, chosen by the creator (keep that preset; you may mark key words).`
+        : "Captions: on; pick the preset that fits.",
+  );
+  const own = p.assets.filter((a) => a.role === "animation");
+  if (own.length)
+    parts.push(
+      `The creator's own animations (place every one with add_animation and its asset_id, where its note says or where it fits best): ${own.map((a) => `${a.id} "${a.name}"${a.note ? ` (${a.note})` : ""}`).join("; ")}.`,
+    );
+  if (s.generateAnimations)
+    parts.push("Generated animations: add 2-4 animation placeholders (add_animation with a prompt) where a motion graphic makes a point clearer; the animation service creates them after the cut.");
+  return parts.join("\n");
 }

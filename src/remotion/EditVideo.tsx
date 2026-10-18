@@ -2,10 +2,11 @@ import { useMemo } from "react";
 import { AbsoluteFill, Img, Sequence, useCurrentFrame, useVideoConfig, type EffectDescriptor } from "remotion";
 import { Audio, Video } from "@remotion/media";
 import { buildTimeline, placeItems, type PlacedItem, type Timeline } from "../shared/timeline";
-import { NEUTRAL_GRADE, NEUTRAL_EFFECTS, dbToGain, mainAsset, type AdjustItem, type EditVideoProps, type Grade, type MediaAsset, type MediaItem, type MusicItem, type Project } from "../shared/project";
+import { NEUTRAL_GRADE, NEUTRAL_EFFECTS, dbToGain, mainAsset, type AdjustItem, type AnimationItem, type EditVideoProps, type Grade, type MediaAsset, type MediaItem, type MusicItem, type Project } from "../shared/project";
 import { resolveGrade } from "../shared/presets";
 import { Captions } from "./Captions";
 import { ShapeLayer, TextLayer } from "./Layers";
+import { AnimationLayer } from "./AnimationLayer";
 import { animState, combine, easeInOutCubic, hash, inOut, clamp01 } from "./anim";
 import { emptyFx, videoEffects, type FrameFx } from "./effects";
 
@@ -168,7 +169,7 @@ function duckCurve(timeline: Timeline, fps: number) {
   return curve;
 }
 
-export const EditVideo: React.FC<EditVideoProps> = ({ project, media, sfx }) => {
+export const EditVideo: React.FC<EditVideoProps> = ({ project, media, sfx, placeholders = false }) => {
   const frame = useCurrentFrame();
   const { fps, width: W, height: H } = useVideoConfig();
   const asset = mainAsset(project);
@@ -216,6 +217,14 @@ export const EditVideo: React.FC<EditVideoProps> = ({ project, media, sfx }) => 
           <ShapeLayer item={p.item as never} duration={p.end - p.start} />
         </Sequence>
       ))}
+      {byType("animation").map((p) => {
+        const it = p.item as AnimationItem;
+        return (
+          <Sequence key={it.id} from={Math.round(p.start * fps)} durationInFrames={Math.max(1, Math.round((p.end - p.start) * fps))} premountFor={fps} name="V5 animation">
+            <AnimationLayer item={it} duration={p.end - p.start} asset={project.assets.find((a) => a.id === it.assetId)} src={it.assetId ? media[it.assetId] : undefined} placeholders={placeholders} />
+          </Sequence>
+        );
+      })}
       <Captions pages={timeline.pages} style={project.captions} />
       {byType("text").map((p) => (
         <Sequence key={p.item.id} from={Math.round(p.start * fps)} durationInFrames={Math.max(1, Math.round((p.end - p.start) * fps))} layout="none" name="V5 text">

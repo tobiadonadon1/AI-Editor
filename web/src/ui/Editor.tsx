@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import { FORMATS, FORMAT_IDS, FPS, mainAsset, uid, type FormatId } from "../../../src/shared/project";
+import { FORMATS, FORMAT_IDS, FPS, mainAsset, uid, type AnimationItem, type FormatId } from "../../../src/shared/project";
 import { makeText } from "../../../src/shared/presets";
 import { cutPoints, outputToSource } from "../../../src/shared/timeline";
 import { UserButton } from "@clerk/react";
 import { closeProject, commit, flushCloud, get, importFiles, openProject, patchProject, player, redo, resume, seek, set, undo, useEditor, type Tool, type Workspace } from "../lib/store";
-import { pending } from "./NewProject";
+import { Setup } from "./Setup";
 import { auth } from "../lib/api";
 import { Icon, Mark } from "./Icons";
 import { Splash } from "./Splash";
@@ -35,16 +35,9 @@ export function Editor({ id }: { id: string }) {
 
   useEffect(() => {
     openProject(id)
-      .then(async () => {
-        // Files picked on the Import screen: main clip first, then the rest.
-        if (pending.files.length) {
-          const [main, ...rest] = pending.files;
-          pending.files = [];
-          await importFiles([main], { asMain: true });
-          if (rest.length) await importFiles(rest);
-          if (pending.firstCut) await resume();
-          else patchProject({ status: "ready", statusDetail: undefined });
-        } else if (get().project?.status === "importing" && !get().project?.mainAssetId) patchProject({ status: "ready", statusDetail: undefined });
+      .then(() => {
+        // An import that stopped before the main video arrived (the tab closed): back to setup.
+        if (get().project?.status === "importing" && !get().project?.mainAssetId) patchProject({ status: "setup", statusDetail: undefined });
       })
       .catch((e) => setError(e instanceof Error ? e.message : String(e)));
   }, [id]);
@@ -75,6 +68,7 @@ export function Editor({ id }: { id: string }) {
     );
   }
   if (!project || project.id !== id) return <Splash label="Opening project…" />;
+  if (project.status === "setup") return <Setup saveState={<SaveState />} />;
 
   return (
     <div className="app">
@@ -339,6 +333,7 @@ function MenuBar({ setMode, showHelp }: { setMode: (m: Mode) => void; showHelp: 
     ],
     Graphics: [
       { label: "New Text Layer", key: `${mod}T`, run: () => addTitle() },
+      { label: "New Animation Placeholder", run: () => addAnimationPlaceholder() },
       { label: "Browse Templates", run: () => set({ workspace: "graphics" }) },
     ],
     Window: WORKSPACES.map((w) => ({ label: `Workspace: ${w.label}`, run: () => set({ workspace: w.id }) })),
@@ -413,6 +408,12 @@ function addTitle() {
   const item = makeText("title", "Your text", get().frame / FPS);
   commit((d) => void d.items.push(item));
   set({ selectedItem: item.id, workspace: "graphics" });
+}
+
+function addAnimationPlaceholder() {
+  const item: AnimationItem = { id: uid("an"), type: "animation", start: get().frame / FPS, duration: 3, prompt: "Describe the animation, then press Generate", status: "placeholder", fit: "overlay", x: 50, y: 40, width: 60, aspect: 1, opacity: 100, trimStart: 0, animIn: "pop", animOut: "fade" };
+  commit((d) => void d.items.push(item));
+  set({ selectedItem: item.id, workspace: "editing" });
 }
 
 function useShortcuts(setMode: (m: Mode) => void, showHelp: () => void) {

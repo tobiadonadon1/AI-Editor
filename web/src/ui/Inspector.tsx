@@ -1,8 +1,9 @@
-import { ANIMS, FORMATS, FORMAT_IDS, LOOK_IDS, NEUTRAL_EFFECTS, NEUTRAL_GRADE, SFX_IDS, TRANSITIONS, FPS, mainAsset, type AdjustItem, type Anim, type Effects, type FormatId, type Grade, type Item, type Motion, type Project, type SfxId, type TransitionKind } from "../../../src/shared/project";
+import { useState } from "react";
+import { ANIMS, FORMATS, FORMAT_IDS, LOOK_IDS, NEUTRAL_EFFECTS, NEUTRAL_GRADE, SFX_IDS, TRANSITIONS, FPS, mainAsset, type AdjustItem, type AnimationItem, type Anim, type Effects, type FormatId, type Grade, type Item, type Motion, type Project, type SfxId, type TransitionKind } from "../../../src/shared/project";
 import { LOOKS } from "../../../src/shared/presets";
 import { placeItems } from "../../../src/shared/timeline";
 import { describeItem } from "../../../src/shared/ops";
-import { commit, get, importFiles, set, useEditor, type Workspace } from "../lib/store";
+import { attachAnimation, commit, generateAnimation, get, importFiles, isPolling, pollAnimation, set, useEditor, type Workspace } from "../lib/store";
 import { previewSfx } from "../lib/sfx";
 import { Icon } from "./Icons";
 import { Check, Empty, HotNumber, Panel, Row, Section, Select, SliderRow, tc } from "./controls";
@@ -178,7 +179,8 @@ function EffectControls() {
         </Section>
       )}
       {item.type === "music" && <MusicControls item={item} />}
-      {(item.type === "text" || item.type === "shape" || item.type === "media") && <Anims item={item as never} />}
+      {item.type === "animation" && <AnimationControls item={item} />}
+      {(item.type === "text" || item.type === "shape" || item.type === "media" || item.type === "animation") && <Anims item={item as never} />}
       {item.type === "text" && (
         <p className="fine pad">
           Edit the words, font and colours in <button type="button" className="link" onClick={() => set({ workspace: "graphics" })}>Essential Graphics</button>.
@@ -186,6 +188,78 @@ function EffectControls() {
       )}
       <Timing item={item} />
     </div>
+  );
+}
+
+const STATUS_TEXT: Record<AnimationItem["status"], string> = {
+  placeholder: "Placeholder: not generated yet. Empty placeholders are left out of the export.",
+  generating: "Generating with the animation service…",
+  ready: "Ready.",
+  failed: "Failed.",
+};
+
+function AnimationControls({ item }: { item: AnimationItem }) {
+  const projectId = useEditor((s) => s.project!.id);
+  const asset = useEditor((s) => s.project!.assets.find((a) => a.id === item.assetId));
+  const [error, setError] = useState<string | null>(null);
+  const busy = item.status === "generating";
+  const stuck = busy && !isPolling(item.id);
+  const useFile = async (file: File | undefined) => {
+    if (!file) return;
+    setError(null);
+    await attachAnimation(projectId, item.id, file, { name: file.name.replace(/\.[^.]+$/, "") }).catch((e) => setError(e instanceof Error ? e.message : String(e)));
+  };
+  return (
+    <>
+      <Section title="Animation">
+        <p className={`fine pad${item.status === "failed" ? " status-error" : ""}`}>
+          {busy && <span className="spinner sm" aria-hidden />} {item.status === "ready" && asset ? `Ready: ${asset.name}.` : STATUS_TEXT[item.status]}
+          {item.status === "failed" && item.error ? ` ${item.error}` : ""}
+        </p>
+        <label className="field pad">
+          <span>What it shows</span>
+          <textarea
+            key={item.id}
+            className="text-in"
+            rows={3}
+            defaultValue={item.prompt}
+            aria-label="Animation description"
+            onKeyDown={(e) => e.stopPropagation()}
+            onBlur={(e) => {
+              const v = e.target.value.trim().slice(0, 600);
+              if (v && v !== item.prompt) editItem<AnimationItem>(item.id, (it) => void (it.prompt = v));
+            }}
+          />
+        </label>
+        <div className="row-gap pad">
+          <button type="button" className="mini" disabled={busy && !stuck} onClick={() => void (stuck ? pollAnimation(projectId, item.id) : generateAnimation(item.id))}>
+            <Icon name="sparkle" size={12} /> {stuck ? "Check again" : item.status === "ready" ? "Regenerate" : busy ? "Generating…" : "Generate"}
+          </button>
+          <label className="mini file-btn">
+            <Icon name="upload" size={12} /> Use a file…
+            <input type="file" accept="video/*,image/*" onChange={(e) => (void useFile(e.target.files?.[0]), (e.target.value = ""))} />
+          </label>
+        </div>
+        {error && <p className="fine pad status-error">{error}</p>}
+        <Row label="Fit">
+          <Select label="Fit" value={item.fit} options={[{ value: "overlay", label: "Overlay" }, { value: "fullscreen", label: "Full screen" }]} onChange={(v) => editItem<AnimationItem>(item.id, (it) => void (it.fit = v as AnimationItem["fit"]))} />
+        </Row>
+      </Section>
+      {item.fit === "overlay" && (
+        <Section title="Motion" fx>
+          <Row label="Position">
+            <HotNumber value={item.x} digits={1} step={0.5} label="Position X" onChange={(v) => editItem<AnimationItem>(item.id, (it) => void (it.x = v), "x")} />
+            <HotNumber value={item.y} digits={1} step={0.5} label="Position Y" onChange={(v) => editItem<AnimationItem>(item.id, (it) => void (it.y = v), "y")} />
+          </Row>
+          <Row label="Width">
+            <HotNumber value={item.width} digits={0} min={10} max={100} unit="%" label="Width" onChange={(v) => editItem<AnimationItem>(item.id, (it) => void (it.width = v), "w")} />
+          </Row>
+          <Row label="Opacity">
+            <HotNumber value={item.opacity} digits={0} min={0} max={100} unit="%" label="Opacity" onChange={(v) => editItem<AnimationItem>(item.id, (it) => void (it.opacity = v), "op")} />
+          </Row>
+        </Section>
+      )}
+    </>
   );
 }
 

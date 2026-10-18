@@ -42,6 +42,7 @@ export interface Health {
   elevenlabs: boolean;
   auth: boolean;
   storage: boolean;
+  animations?: "api" | "mock"; // the configured animation service, or the built-in test mock
   unreachable?: boolean; // the health check itself failed
 }
 
@@ -59,6 +60,13 @@ export const api = {
       body: blob,
       timeoutMs: 125000,
     }),
+  createAnimation: (body: { prompt: string; durationSec: number; width: number; height: number; fps: number; fit: string; format: string; style?: Record<string, unknown>; context?: string; projectId: string; layerId: string }) =>
+    call<{ job: { id: string; provider: string }; status: string; error?: string }>("/api/animations", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), timeoutMs: 40000 }),
+  pollAnimation: (job: { id: string; provider: string }, projectId: string, assetId: string) =>
+    call<{ status: "queued" | "processing" | "ready" | "failed"; url?: string; path?: string; error?: string }>(
+      `/api/animations?${new URLSearchParams({ id: job.id, provider: job.provider, project: projectId, asset: assetId })}`,
+      { timeoutMs: 150000 },
+    ),
   assistant: (body: { mode: "first_cut" | "edit"; prompt: string; state: string; frames?: string[]; history?: { role: "user" | "assistant"; text: string }[] }, signal?: AbortSignal) =>
     call<{ message: string; ops: Op[]; truncated?: boolean }>("/api/assistant", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal, timeoutMs: 305000 }),
 };

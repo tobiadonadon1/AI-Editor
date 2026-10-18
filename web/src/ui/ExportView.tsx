@@ -44,6 +44,7 @@ export function ExportView({ onBack }: { onBack: () => void }) {
   const len = range === "all" ? total : Math.max(0.1, to - from);
   const mbps = PRESETS.find((p) => p.value === quality)!.mbps * scale * scale;
   const inputProps = useMemo<EditVideoProps>(() => ({ project, media, sfx }), [project, media, sfx]);
+  const emptyAnimations = project.items.filter((i) => i.type === "animation" && !i.hidden && !(i.assetId && media[i.assetId])).length;
 
   useEffect(() => {
     void canRenderMediaOnWeb({ container: "mp4", videoCodec: "h264", audioCodec: "aac", width: outW, height: outH }).then((r) => setIssues(r.issues.filter((i) => i.severity === "error").map((i) => i.message)));
@@ -175,6 +176,11 @@ export function ExportView({ onBack }: { onBack: () => void }) {
           <p className="fine center">Duration {tc(len)}</p>
           {issues.length > 0 && <p className="status-error pad">{issues.join(" ")} Try the latest Chrome or Edge.</p>}
           {error && <p className="status-error pad">Export failed: {error}</p>}
+          {emptyAnimations > 0 && (
+            <p className="fine pad warn-text">
+              {emptyAnimations} animation placeholder{emptyAnimations === 1 ? " is" : "s are"} still empty and will be left out of the export. Generate {emptyAnimations === 1 ? "it" : "them"} or drop in a file from Effect Controls.
+            </p>
+          )}
           <div className="export-actions">
             <button type="button" className="btn btn-quiet" onClick={onBack}>
               Back to Edit

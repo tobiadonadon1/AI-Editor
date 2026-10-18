@@ -327,7 +327,7 @@ export function Timeline() {
                       return (
                         <div
                           key={p.item.id}
-                          className={`clip clip-${p.item.type}${selectedItem === p.item.id ? " selected" : ""}${p.item.hidden ? " hidden-item" : ""}`}
+                          className={`clip clip-${p.item.type}${p.item.type === "animation" && p.item.status !== "ready" ? " pending" : ""}${selectedItem === p.item.id ? " selected" : ""}${p.item.hidden ? " hidden-item" : ""}`}
                           style={{ left, width: w, top: lane.id === "A2" ? 2 : 1 + row * ROW, height: lane.id === "A2" ? h - 4 : ROW - 2 }}
                           onPointerDown={(e) => onItemDown(e, p, "move")}
                           onDoubleClick={() => set({ workspace: p.item.type === "text" ? "graphics" : p.item.type === "adjust" ? "color" : p.item.type === "music" || p.item.type === "sfx" ? "audio" : "editing" })}
@@ -383,6 +383,8 @@ function itemLabel(item: Item) {
       return item.sound;
     case "music":
       return get().project?.assets.find((a) => a.id === item.assetId)?.name ?? "Music";
+    case "animation":
+      return item.status === "ready" ? (get().project?.assets.find((a) => a.id === item.assetId)?.name ?? "Animation") : `${item.status === "generating" ? "Generating · " : item.status === "failed" ? "Failed · " : "Placeholder · "}${item.prompt}`;
   }
 }
 

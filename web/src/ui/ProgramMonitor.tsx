@@ -39,7 +39,7 @@ export function ProgramMonitor() {
   const dispW = Math.max(1, fmt.width * scale);
   const dispH = Math.max(1, fmt.height * scale);
 
-  const inputProps = useMemo<EditVideoProps>(() => ({ project, media, sfx }), [project, media, sfx]);
+  const inputProps = useMemo<EditVideoProps>(() => ({ project, media, sfx, placeholders: true }), [project, media, sfx]);
 
   useEffect(() => {
     const p = player.current;
@@ -77,7 +77,7 @@ export function ProgramMonitor() {
   };
   const selected = project.items.find((i) => i.id === selectedId) ?? null;
   // Measuring forces a layout, so the selection box is only drawn while paused (it would lag a frame anyway).
-  const selRect = !playing && selected && ["text", "shape", "media"].includes(selected.type) ? rectOf(selected.id) : null;
+  const selRect = !playing && selected && ["text", "shape", "media", "animation"].includes(selected.type) ? rectOf(selected.id) : null;
 
   const hitTest = (x: number, y: number): string | null => {
     const host = surface.current;
@@ -157,6 +157,7 @@ export function ProgramMonitor() {
           it.w = Math.round(start.w * k * 10) / 10;
           it.h = Math.round(start.h * k * 10) / 10;
         } else if (it.type === "media" && start.type === "media") it.scale = Math.min(1, Math.round(start.scale * k * 100) / 100);
+        else if (it.type === "animation" && start.type === "animation") it.width = Math.min(100, Math.max(10, Math.round(start.width * k)));
       });
     };
     const up = () => {
@@ -172,7 +173,7 @@ export function ProgramMonitor() {
     await preloadFonts(project);
     const still = await renderStillOnWeb({
       composition: { component: EditVideo, durationInFrames: timeline.durationInFrames, fps: FPS, width: fmt.width, height: fmt.height, id: "still", defaultProps: inputProps },
-      inputProps,
+      inputProps: { ...inputProps, placeholders: false },
       frame,
       licenseKey: "free-license",
     });

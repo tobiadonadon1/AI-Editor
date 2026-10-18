@@ -4,7 +4,8 @@ A professional video editor you can talk to. It looks and works like Premiere Pr
 
 ## Use it
 
-- **New project**: drop footage (plus optional B-roll images/clips and music), pick a format, describe the edit. The first video is transcribed and Claude makes the first cut: retakes and filler removed, pacing, captions with key words, colour, hook title, zooms, graphics, CTA.
+- **New project**, in four steps: name and format; the main video (plus optional B-roll and music); options (editing style, captions on/off and their look, your own ready-made animations with a note on where each goes, and generated animations); then any instructions. The video is transcribed and Claude makes the first cut: retakes and filler removed, pacing, captions with key words, colour, hook title, zooms, your animations placed, animation placeholders, CTA. On-screen numbering and bullet points ("01", "Step 2", "•") are not used unless you ask for them.
+- **Animations**: their own track (V5). Placeholders are filled by the animation API (see [docs/animation-api.md](docs/animation-api.md)); until one is connected a built-in mock returns a sample animation, so the flow can be tested.
 - **Edit**: by hand in the panels, or by typing (or dictating) to the Assistant. "Here" means the playhead, "this" means the selected layer.
 - **Export**: H.264 MP4 rendered in the browser with the same engine as the preview (9:16, 4:5, 1:1, 16:9).
 - **Open sample project** shows a finished edit and works without API keys.
@@ -33,6 +34,7 @@ Pushing to `main` deploys. `vercel.json` builds the Vite app to `web/dist` and d
 | `CLERK_SECRET_KEY`, `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | Accounts (set by the Clerk Marketplace integration) |
 | `BLOB_READ_WRITE_TOKEN` | Media files in Vercel Blob (set when the Blob store is connected) |
 | `SUPABASE_URL`, `SUPABASE_SECRET_KEY` | The projects database; create the table once with `supabase/migrations/0001_projects.sql` in the Supabase SQL editor |
+| `ANIMATION_API_URL`, `ANIMATION_API_KEY` | Optional: the animation service that fills animation placeholders ([contract](docs/animation-api.md)). Without them a built-in mock answers |
 
 ## How it works
 
@@ -45,6 +47,7 @@ browser                                         server (Vercel functions)
   download on another device  ◄──────────────  api/media       -> short-lived signed links
   audio -> 16 kHz WAV chunks  ───────────────►  api/transcribe  -> ElevenLabs Scribe v2
   project state as text + 3 stills  ─────────►  api/assistant   -> Claude Opus 5.5 with editing tools
+  animation placeholders  ───────────────────►  api/animations  -> ANIMATION_API_URL (or the mock)
   tool calls applied to the project  ◄────────  (cut_words, set_color, add_text, add_zoom, ...)
   Remotion Player preview = Remotion web renderer export
 ```

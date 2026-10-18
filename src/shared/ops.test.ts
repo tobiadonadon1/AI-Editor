@@ -1,7 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { applyOps, describeForAI } from "./ops.js";
-import { FPS, newProject, type Project, type TextItem } from "./project.js";
+import { applyOps, describeForAI, withoutListMarkers } from "./ops.js";
+import { FPS, newProject, type AnimationItem, type Project, type TextItem } from "./project.js";
+import { fullBrief } from "./presets.js";
 import { buildTimeline, durationSec, itemStart, placeItems, wordOutputTime } from "./timeline.js";
 
 // Ten words, one per second, half a second each, in a 10 s clip.
@@ -161,4 +162,74 @@ test("a new title at the same time and place replaces the old one", () => {
   );
   const texts = project.items.filter((i): i is TextItem => i.type === "text");
   assert.deepEqual(texts.map((t) => t.text), ["Two"]);
+});
+
+test("on-screen numbering and bullets are taken off; real figures stay", () => {
+  const strip = (text: string) => withoutListMarkers(text);
+  assert.equal(strip("*01*\nStart small"), "Start small");
+  assert.equal(strip("01 Start small"), "Start small");
+  assert.equal(strip("*01* Start *small*"), "Start *small*");
+  assert.equal(strip("1. Cut the pauses"), "Cut the pauses");
+  assert.equal(strip("Step 2: let AI pick"), "let AI pick");
+  assert.equal(strip("• Never edit twice"), "Never edit twice");
+  assert.equal(strip("#3\nNever edit twice"), "Never edit twice");
+  for (const keep of ["*3x* faster", "+38% sales", "$49", "*7*\ndays", "3 ways to edit *faster*", "24/7 support", "1.5x speed", "Link in bio →"]) assert.equal(strip(keep), keep);
+  assert.throws(() => strip("*02*"));
+  assert.throws(() => strip("Step 3"));
+});
+
+test("the AI cannot add a layer that only shows a step number, unless the creator asked for lists", () => {
+  const ops = [
+    { name: "add_text", input: { text: "*01*", preset: "number", start_sec: 1 } },
+    { name: "add_text", input: { text: "*01*\nStart small", preset: "title", start_sec: 3 } },
+  ];
+  const r = applyOps(sample(), ops, ctx);
+  assert.equal(r.errors.length, 1);
+  assert.deepEqual(r.project.items.filter((i): i is TextItem => i.type === "text").map((t) => t.text), ["Start small"]);
+  const asked = applyOps(sample(), ops, { ...ctx, allowLists: true });
+  assert.deepEqual(asked.errors, []);
+  assert.deepEqual(asked.project.items.filter((i): i is TextItem => i.type === "text").map((t) => t.text), ["*01*", "*01*\nStart small"]);
+});
+
+test("animations: placeholders from a prompt, the creator's own files by asset id", () => {
+  const p = sample();
+  p.assets.push({ id: "an1", name: "logo sting", kind: "video", durationSec: 2, width: 1000, height: 500, hasAudio: false, size: 1, role: "animation", note: "at the end" });
+  const { project, errors } = applyOps(
+    p,
+    [
+      { name: "add_animation", input: { prompt: "A bar chart growing from 1x to 3x in brand yellow", start_word: "w5", duration_sec: 2.5 } },
+      { name: "add_animation", input: { asset_id: "an1", start_sec: 8, duration_sec: 5, fit: "fullscreen" } },
+      { name: "add_animation", input: { asset_id: "nope", start_sec: 1 } },
+      { name: "add_animation", input: { start_sec: 1 } },
+    ],
+    ctx,
+  );
+  assert.equal(errors.length, 2);
+  const [gen, own] = project.items.filter((i): i is AnimationItem => i.type === "animation");
+  assert.equal(gen.status, "placeholder");
+  assert.equal(gen.anchorWord, "w5");
+  assert.equal(gen.assetId, undefined);
+  assert.equal(own.status, "ready");
+  assert.equal(own.assetId, "an1");
+  assert.equal(own.fit, "fullscreen");
+  assert.equal(own.duration, 2, "no longer than the file");
+  assert.equal(own.aspect, 2);
+  const state = describeForAI(project, ctx);
+  assert.match(state, /an1 video ANIMATION "logo sting".*note: "at the end"/);
+  assert.match(state, /animation .* placeholder fit=overlay .*prompt="A bar chart/);
+  const removed = applyOps(project, [{ name: "remove_items", input: { type: "animation" } }], ctx);
+  assert.equal(removed.project.items.filter((i) => i.type === "animation").length, 0);
+});
+
+test("the setup choices become the first-cut brief", () => {
+  const p = sample();
+  p.assets.push({ id: "an1", name: "logo", kind: "image", durationSec: 0, width: 500, height: 500, hasAudio: false, size: 1, role: "animation", note: "opening" });
+  p.setup = { style: "educational", captions: { enabled: false, preset: null }, ownAnimations: true, generateAnimations: true, instructions: "Keep it under 40 s" };
+  const brief = fullBrief(p);
+  assert.match(brief, /Keep it under 40 s/);
+  assert.match(brief, /Style: Educational/);
+  assert.match(brief, /Captions: off/);
+  assert.match(brief, /an1 "logo" \(opening\)/);
+  assert.match(brief, /animation placeholders/);
+  assert.doesNotMatch(brief, /number/i);
 });
