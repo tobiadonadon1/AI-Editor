@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Player } from "@remotion/player";
 import { renderStillOnWeb } from "@remotion/web-renderer";
+import { smoothTextOutlines } from "../../../src/remotion/canvas-text";
 import { EditVideo } from "../../../src/remotion/EditVideo";
 import { preloadFonts } from "../../../src/remotion/fonts";
 import { FORMATS, FPS, type EditVideoProps, type Item } from "../../../src/shared/project";
@@ -171,6 +172,7 @@ export function ProgramMonitor() {
 
   const exportFrame = async () => {
     await preloadFonts(project);
+    smoothTextOutlines();
     const still = await renderStillOnWeb({
       composition: { component: EditVideo, durationInFrames: timeline.durationInFrames, fps: FPS, width: fmt.width, height: fmt.height, id: "still", defaultProps: inputProps },
       inputProps: { ...inputProps, placeholders: false },

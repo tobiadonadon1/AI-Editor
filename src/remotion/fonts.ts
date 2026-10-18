@@ -15,7 +15,7 @@ import * as Lora from "@remotion/google-fonts/Lora";
 import type { FontId, Project } from "../shared/project";
 
 interface FontModule {
-  loadFont: (style?: never, options?: { weights?: string[]; subsets?: string[] }) => { fontFamily: string };
+  loadFont: (style?: never, options?: { weights?: string[]; subsets?: string[] }) => { fontFamily: string; waitUntilDone: () => Promise<unknown> };
   getInfo: () => { fontFamily: string; fonts: Record<string, Record<string, unknown>> };
 }
 
@@ -38,6 +38,7 @@ const MODULES: Record<FontId, FontModule> = {
 
 const WANTED = ["400", "600", "700", "800", "900"];
 const loaded = new Map<string, string>();
+const pending = new Map<string, Promise<unknown>>();
 
 // Loads a font the first time a layer uses it; rendering waits until it is ready.
 export function font(id: FontId, italic = false): string {
@@ -49,20 +50,33 @@ export function font(id: FontId, italic = false): string {
   const style = italic && info.fonts.italic ? "italic" : "normal";
   const available = Object.keys(info.fonts[style] ?? info.fonts.normal ?? {});
   const weights = available.filter((w) => WANTED.includes(w));
-  const { fontFamily } = mod.loadFont(style as never, { weights: weights.length ? weights : available, subsets: ["latin"] });
+  const { fontFamily, waitUntilDone } = mod.loadFont(style as never, { weights: weights.length ? weights : available, subsets: ["latin"] });
   loaded.set(key, fontFamily);
+  pending.set(key, waitUntilDone().catch(() => undefined));
   return fontFamily;
+}
+
+// Resolves once every face of the font has downloaded (document.fonts.load alone can resolve before that).
+export function fontReady(id: FontId, italic = false): Promise<unknown> {
+  font(id, italic);
+  return pending.get(`${id}:${italic ? "i" : "n"}`) ?? Promise.resolve();
 }
 
 // Before an export or a still: load every face the project uses, so no frame is drawn with a fallback font.
 export async function preloadFonts(project: Project) {
   if (typeof document === "undefined") return;
   const specs = new Set<string>();
-  if (project.captions.enabled) specs.add(`900 100px "${font(project.captions.font)}"`);
+  const ready: Promise<unknown>[] = [];
+  if (project.captions.enabled) {
+    specs.add(`900 100px "${font(project.captions.font)}"`);
+    ready.push(fontReady(project.captions.font));
+  }
   for (const it of project.items) {
     if (it.type !== "text") continue;
     const s = it.style;
     specs.add(`${s.italic ? "italic " : ""}${s.weight} 100px "${font(s.font, s.italic)}"`);
+    ready.push(fontReady(s.font, s.italic));
   }
+  await Promise.all(ready);
   await Promise.all([...specs].map((spec) => document.fonts.load(spec).catch(() => undefined)));
 }

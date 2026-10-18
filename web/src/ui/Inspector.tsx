@@ -193,7 +193,7 @@ function EffectControls() {
 
 const STATUS_TEXT: Record<AnimationItem["status"], string> = {
   placeholder: "Placeholder: not generated yet. Empty placeholders are left out of the export.",
-  generating: "Generating with the animation service…",
+  generating: "Being made: watch the progress at the bottom of the editor…",
   ready: "Ready.",
   failed: "Failed.",
 };

@@ -38,6 +38,12 @@ try {
   await new Promise((r) => setTimeout(r, 4500));
   const done = await (await fetch(`${B}/api/animations?${new URLSearchParams({ id: anim.job.id, provider: anim.job.provider, project: "p-e2e", asset: "m-anim" })}`, { headers: H })).json();
   console.log("animation ready:", done.status, done.url ?? done.path);
+  const health = await (await fetch(`${B}/api/health`)).json();
+  if (health.animations === "code") {
+    const t0 = Date.now();
+    const written = await (await fetch(`${B}/api/animations`, { method: "POST", headers: { ...H, "Content-Type": "application/json" }, body: JSON.stringify({ action: "write", prompt: "A green check mark that draws itself inside a soft circle", durationSec: 2, width: 400, height: 400, fps: 30 }) })).json();
+    console.log("animation code written:", typeof written.code === "string" && /export\s+default/.test(written.code), `${Math.round((Date.now() - t0) / 1000)} s`, written.error ?? "");
+  }
   console.log("animations need sign-in:", (await fetch(`${B}/api/animations`, { method: "POST", body: "{}" })).status);
   const list = await fetch(`${B}/api/projects`, { headers: H });
   console.log("list:", list.status, (await list.text()).slice(0, 200));

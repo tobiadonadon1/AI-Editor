@@ -7,6 +7,18 @@
   "functions": {
     "api/assistant.ts": { "maxDuration": 300 },
     "api/transcribe.ts": { "maxDuration": 120 },
-    "api/animations.ts": { "maxDuration": 180 }
-  }
+    "api/animations.ts": { "maxDuration": 300 }
+  },
+  "rewrites": [
+    { "source": "/sign-in", "destination": "/index.html" },
+    { "source": "/sign-in/:path*", "destination": "/index.html" },
+    { "source": "/sign-up", "destination": "/index.html" },
+    { "source": "/sign-up/:path*", "destination": "/index.html" }
+  ],
+  "headers": [
+    {
+      "source": "/assets/(.*)",
+      "headers": [{ "key": "Access-Control-Allow-Origin", "value": "*" }]
+    }
+  ]
 }

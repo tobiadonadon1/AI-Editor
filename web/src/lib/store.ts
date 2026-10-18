@@ -10,6 +10,7 @@ import { api, ApiError } from "./api";
 import * as cloudApi from "./cloud";
 import { cloud } from "./cloud";
 import { sfxLibrary } from "./sfx";
+import { AnimationCodeError, renderAnimationFrames, renderAnimationVideo, type AnimationSpec } from "./animator";
 
 export type Tool = "select" | "razor" | "type" | "hand";
 export type Workspace = "editing" | "color" | "graphics" | "captions" | "audio";
@@ -272,7 +273,9 @@ export async function openProject(id: string) {
   // A tab closed mid-import leaves the project half-done: resume where it stopped.
   if (project.status === "transcribing" || project.status === "planning" || project.status === "importing") void resume();
   // Animations that were still being made when the tab closed.
-  for (const it of project.items) if (it.type === "animation" && it.status === "generating" && it.job) void pollAnimation(project.id, it.id);
+  // Code animations are made in this tab, so one cut off by closing it starts again.
+  for (const it of project.items)
+    if (it.type === "animation" && it.status === "generating" && it.job) void (it.job.provider === "code" ? generateAnimation(it.id, project.id) : pollAnimation(project.id, it.id));
 }
 
 // Leaving the editor sends unsaved changes and frees the media held in memory.
@@ -605,20 +608,20 @@ export async function generateAnimation(itemId: string, projectId = state.projec
   const lead = p.items.find((it): it is TextItem => it.type === "text" && ["hook", "title"].includes(it.preset));
   polling.add(itemId); // counts as in progress from the first request, not just while polling
   await patchAnimation(p.id, itemId, { status: "generating", error: undefined });
+  const brief = {
+    prompt: item.prompt,
+    durationSec: Math.round(item.duration * 100) / 100,
+    width,
+    height,
+    fps: FPS,
+    fit: item.fit,
+    format: p.format,
+    style: lead ? { font: lead.style.font, color: lead.style.color, accentColor: lead.style.accentColor } : undefined,
+    context: said,
+  };
+  if ((await api.health()).animations === "code") return codeAnimation(p.id, itemId, brief);
   try {
-    const res = await api.createAnimation({
-      prompt: item.prompt,
-      durationSec: Math.round(item.duration * 100) / 100,
-      width,
-      height,
-      fps: FPS,
-      fit: item.fit,
-      format: p.format,
-      style: lead ? { font: lead.style.font, color: lead.style.color, accentColor: lead.style.accentColor } : undefined,
-      context: said,
-      projectId: p.id,
-      layerId: itemId,
-    });
+    const res = await api.createAnimation({ ...brief, projectId: p.id, layerId: itemId });
     if (res.status === "failed") throw new Error(res.error ?? "The animation service could not make this animation.");
     await patchAnimation(p.id, itemId, { job: { ...res.job, startedAt: new Date().toISOString(), assetId: uid("m") } });
     polling.delete(itemId);
@@ -626,6 +629,50 @@ export async function generateAnimation(itemId: string, projectId = state.projec
   } catch (e) {
     polling.delete(itemId);
     await patchAnimation(p.id, itemId, { status: "failed", error: e instanceof Error ? e.message : String(e) });
+  }
+}
+
+type Brief = Omit<Parameters<typeof api.animationCode>[0], "action" | "code" | "error" | "frames">;
+
+// Claude writes the animation as Remotion code; the sandboxed animator checks it runs, Claude looks at stills
+// of it once and polishes it, then the animator renders it to a transparent WebM that fills the layer.
+async function codeAnimation(projectId: string, itemId: string, brief: Brief) {
+  const short = brief.prompt.length > 34 ? `${brief.prompt.slice(0, 32)}…` : brief.prompt;
+  const t = task(`Animation: writing “${short}”`);
+  const spec: AnimationSpec = { width: brief.width, height: brief.height, fps: brief.fps, durationInFrames: Math.max(1, Math.round(brief.durationSec * brief.fps)), transparent: brief.fit !== "fullscreen" };
+  const at = (f: number) => Math.min(spec.durationInFrames - 1, Math.round(spec.durationInFrames * f));
+  const stills = [at(0.15), at(0.45), at(0.8)];
+  const write = async (action: "write" | "fix" | "review", extra: { code?: string; error?: string; frames?: string[] } = {}) => (await api.animationCode({ action, ...brief, ...extra })).code;
+  // Runs the code; on an error, asks for a fix (twice at most). Returns the working code and its stills.
+  const runnable = async (code: string): Promise<{ code: string; frames: string[] }> => {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return { code, frames: await renderAnimationFrames(code, spec, stills) };
+      } catch (e) {
+        if (!(e instanceof AnimationCodeError) || attempt >= 2) throw e;
+        t.progress(null, `Animation: fixing “${short}”`);
+        code = (await write("fix", { code, error: e.message })) ?? code;
+      }
+    }
+  };
+  try {
+    await patchAnimation(projectId, itemId, { job: { id: "code", provider: "code", startedAt: new Date().toISOString(), assetId: uid("m") } });
+    let best = await runnable((await write("write"))!);
+    t.progress(null, `Animation: reviewing “${short}”`);
+    const polished = await write("review", { code: best.code, frames: best.frames }).catch(() => null);
+    if (polished) best = await runnable(polished).catch(() => best);
+    t.progress(0, `Animation: rendering “${short}”`);
+    const video = await renderAnimationVideo(best.code, spec, (x) => t.progress(x));
+    const item = (state.project?.id === projectId ? state.project : await db.getProject(projectId))?.items.find((it): it is AnimationItem => it.id === itemId && it.type === "animation");
+    if (!item || item.status !== "generating") return; // deleted, or replaced by a file meanwhile
+    await attachAnimation(projectId, itemId, new File([video], "animation.webm", { type: "video/webm" }), { id: item.job?.assetId, name: `Animation · ${brief.prompt.slice(0, 40)}` });
+    // The code has its own entrance and exit; the layer's pop and fade on top would double them.
+    await patchAnimation(projectId, itemId, { code: best.code, animIn: "none", animOut: "none" });
+  } catch (e) {
+    await patchAnimation(projectId, itemId, { status: "failed", job: undefined, error: e instanceof Error ? e.message : String(e) });
+  } finally {
+    t.done();
+    polling.delete(itemId);
   }
 }
 

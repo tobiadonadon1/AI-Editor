@@ -1,9 +1,12 @@
+import type Anthropic from "@anthropic-ai/sdk";
 import { put } from "@vercel/blob";
-import { animationProvider, authorize, hasStorage, json, rateLimited, readJson, userPrefix } from "./_lib/server.js";
+import { extractCode, MOTION_FIX, MOTION_REVIEW, MOTION_SYSTEM, motionRequest } from "./_lib/motion.js";
+import { animationProvider, authorize, claude, hasStorage, json, rateLimited, readJson, userPrefix } from "./_lib/server.js";
 
 // Animation placeholders become real animations here. With ANIMATION_API_URL set, requests go to that service
-// (contract in docs/animation-api.md); without it a built-in mock answers like one would, so the whole flow can
-// be tested: it "renders" for a few seconds, then returns a sample transparent animation.
+// (contract in docs/animation-api.md). Otherwise Claude writes each animation as Remotion code
+// ({ action: "write" | "fix" | "review" }), which the editor renders in a sandbox. With no AI configured, a
+// built-in mock answers like a service would: it "renders" for a few seconds, then returns a sample animation.
 
 interface Job {
   id: string;
@@ -24,6 +27,10 @@ interface CreateBody {
   context?: unknown;
   projectId?: unknown;
   layerId?: unknown;
+  action?: unknown;
+  code?: unknown;
+  error?: unknown;
+  frames?: unknown;
 }
 
 const MOCK_RENDER_MS = 4000;
@@ -72,7 +79,29 @@ export async function POST(req: Request) {
   const fps = int(b?.fps, 1, 60);
   const durationSec = typeof b?.durationSec === "number" && Number.isFinite(b.durationSec) ? Math.min(30, Math.max(0.5, b.durationSec)) : null;
   if (!prompt || !width || !height || !fps || !durationSec) return json({ error: "Expected { prompt, durationSec, width, height, fps }" }, 400);
-  if (animationProvider() === "mock") return json({ job: { id: `mock-${Date.now()}`, provider: "mock" }, status: "processing" });
+  if (typeof b?.action === "string") {
+    if (animationProvider() !== "code") return json({ error: "This server does not write animations as code." }, 400);
+    const style = b.style && typeof b.style === "object" ? (b.style as Record<string, unknown>) : {};
+    const str = (v: unknown) => (typeof v === "string" ? v.slice(0, 40) : undefined);
+    return writeCode(req, {
+      action: b.action,
+      brief: {
+        prompt,
+        width,
+        height,
+        fps,
+        durationSec,
+        fullscreen: b.fit === "fullscreen",
+        format: str(b.format),
+        style: { font: str(style.font), color: str(style.color), accentColor: str(style.accentColor) },
+        context: typeof b.context === "string" ? b.context.slice(0, 1000) : undefined,
+      },
+      code: typeof b.code === "string" ? b.code.slice(0, 60_000) : "",
+      error: typeof b.error === "string" ? b.error.slice(0, 1500) : "",
+      frames: Array.isArray(b.frames) ? b.frames.filter((f): f is string => typeof f === "string" && f.length < 400_000 && /^[A-Za-z0-9+/=]+$/.test(f.slice(0, 200))).slice(0, 4) : [],
+    });
+  }
+  if (animationProvider() !== "api") return json({ job: { id: `mock-${Date.now()}`, provider: "mock" }, status: "processing" });
   try {
     const job = await service("", {
       method: "POST",
@@ -94,6 +123,49 @@ export async function POST(req: Request) {
   } catch (e) {
     console.error("animations create", e);
     return json({ error: `Could not start the animation: ${e instanceof Error ? e.message : "unknown error"}.` }, 502);
+  }
+}
+
+// Claude writes (or fixes, or reviews from stills) one animation as a Remotion component.
+async function writeCode(req: Request, o: { action: unknown; brief: Parameters<typeof motionRequest>[0]; code: string; error: string; frames: string[] }) {
+  const ai = claude(req);
+  if (!ai) return json({ error: "No AI is configured on this server." }, 503);
+  if (o.action !== "write" && !o.code) return json({ error: "Expected the code to fix or review." }, 400);
+  const fence = (c: string) => `\`\`\`tsx\n${c}\n\`\`\``;
+  const messages: Anthropic.Beta.BetaMessageParam[] = [{ role: "user", content: motionRequest(o.brief) }];
+  if (o.action === "fix") {
+    if (!o.error) return json({ error: "Expected the error to fix." }, 400);
+    messages.push({ role: "assistant", content: fence(o.code) }, { role: "user", content: MOTION_FIX(o.error) });
+  } else if (o.action === "review") {
+    if (!o.frames.length) return json({ error: "Expected stills to review." }, 400);
+    messages.push(
+      { role: "assistant", content: fence(o.code) },
+      { role: "user", content: [...o.frames.map((data) => ({ type: "image" as const, source: { type: "base64" as const, media_type: "image/jpeg" as const, data } })), { type: "text" as const, text: MOTION_REVIEW }] },
+    );
+  } else if (o.action !== "write") return json({ error: "Unknown action" }, 400);
+  try {
+    const stream = ai.client.beta.messages.stream(
+      {
+        model: ai.model,
+        max_tokens: 24000,
+        ...(ai.direct ? { betas: ["server-side-fallback-2026-07-01"], fallbacks: "default" as never } : {}),
+        thinking: { type: "adaptive" },
+        output_config: { effort: o.action === "write" ? "high" : "medium" },
+        system: [{ type: "text", text: MOTION_SYSTEM, cache_control: { type: "ephemeral" } }],
+        messages,
+      },
+      { timeout: 270_000, maxRetries: 1 },
+    );
+    const message = await stream.finalMessage();
+    if (message.stop_reason === "refusal") return json({ error: "The AI declined to make this animation." }, 422);
+    const text = message.content.flatMap((c) => (c.type === "text" ? [c.text] : [])).join("\n");
+    if (o.action === "review" && /^\s*LGTM\b/.test(text)) return json({ code: null, approved: true });
+    const code = extractCode(text);
+    if (!code) return json({ error: message.stop_reason === "max_tokens" ? "The animation code came out too long." : "The AI did not send animation code." }, 502);
+    return json({ code });
+  } catch (e) {
+    console.error("animations code", e);
+    return json({ error: `Could not write the animation: ${e instanceof Error ? e.message : "unknown error"}.` }, 502);
   }
 }
 

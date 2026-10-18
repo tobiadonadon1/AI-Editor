@@ -45,12 +45,31 @@ function localApi(): Plugin {
   };
 }
 
+// The animator page (web/animator.html) runs in an opaque-origin sandbox, so its scripts load cross-origin:
+// they need CORS (vercel.json sets it for production), and in development Vite's own inline scripts and
+// live-reload socket need its content policy relaxed.
+function animatorDev(): Plugin {
+  return {
+    name: "animator-dev",
+    apply: "serve",
+    transformIndexHtml(html, ctx) {
+      if (!ctx.path.endsWith("animator.html")) return html;
+      return html.replace("script-src 'self' 'unsafe-eval'", "script-src 'self' 'unsafe-eval' 'unsafe-inline' http://localhost:*").replace("connect-src ", "connect-src ws://localhost:* http://localhost:* ");
+    },
+  };
+}
+
 export default defineConfig({
   root: "web",
   // .env files sit at the repo root; only the Clerk publishable key (Vercel provisions it as NEXT_PUBLIC_*) reaches the browser.
   envDir: process.cwd(),
   envPrefix: noAuth ? ["VITE_"] : ["VITE_", "NEXT_PUBLIC_CLERK_"],
-  plugins: [react(), localApi()],
-  build: { outDir: "dist", emptyOutDir: true, chunkSizeWarningLimit: 4000 },
-  server: { port: 5173 },
+  plugins: [react(), localApi(), animatorDev()],
+  build: {
+    outDir: "dist",
+    emptyOutDir: true,
+    chunkSizeWarningLimit: 4000,
+    rollupOptions: { input: { main: path.resolve("web/index.html"), animator: path.resolve("web/animator.html") } },
+  },
+  server: { port: 5173, cors: { origin: [/^https?:\/\/(?:(?:[^:]+\.)?localhost|127\.0\.0\.1|\[::1\])(?::\d+)?$/, "null"] } },
 });

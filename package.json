@@ -17,14 +17,18 @@
     "@remotion/effects": "4.0.535",
     "@remotion/google-fonts": "4.0.535",
     "@remotion/media": "4.0.535",
+    "@remotion/noise": "4.0.535",
+    "@remotion/paths": "4.0.535",
     "@remotion/player": "4.0.535",
+    "@remotion/shapes": "4.0.535",
     "@remotion/web-renderer": "4.0.535",
     "@supabase/supabase-js": "2.118.0",
     "@vercel/blob": "2.8.2",
     "mediabunny": "1.61.3",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
-    "remotion": "4.0.535"
+    "remotion": "4.0.535",
+    "sucrase": "3.35.1"
   },
   "devDependencies": {
     "@types/node": "^26.6.5",

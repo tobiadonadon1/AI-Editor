@@ -265,12 +265,16 @@ function OptionsStep({ health, onBack, onNext }: { health: Health | null; onBack
           <span className="check-box" aria-hidden="true">
             {s.generateAnimations && <Icon name="check" size={10} />}
           </span>
-          <span>Generate animations with the animation API</span>
+          <span>Generate animations for the video</span>
         </label>
         {s.generateAnimations && (
           <p className="fine setup-sub">
-            The AI marks 2-4 moments where an animation helps and describes each one. Those placeholders are sent to the animation service and filled in when it answers.{" "}
-            {health?.animations === "api" ? "Connected to the animation service set on this server." : "No animation service is connected yet, so a built-in test service answers with a sample animation."}
+            The AI marks 2-4 moments where an animation helps and describes each one, then each placeholder is filled in.{" "}
+            {health?.animations === "api"
+              ? "They are made by the animation service set on this server."
+              : health?.animations === "code"
+                ? "Claude designs each one as motion-graphics code, checks stills of it, and it renders right here in your browser (about a minute each)."
+                : "No animation service or AI is set up, so a built-in test service answers with a sample animation."}
           </p>
         )}
       </div>

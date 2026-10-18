@@ -1,4 +1,5 @@
 import { renderMediaOnWeb } from "@remotion/web-renderer";
+import { smoothTextOutlines } from "../../../src/remotion/canvas-text";
 import { EditVideo } from "../../../src/remotion/EditVideo";
 import { preloadFonts } from "../../../src/remotion/fonts";
 import { FORMATS, FPS, type EditVideoProps, type Project } from "../../../src/shared/project";
@@ -27,6 +28,7 @@ export async function exportMp4(
   const t0 = performance.now();
   const inputProps: EditVideoProps = { project, media, sfx };
   await preloadFonts(project);
+  smoothTextOutlines();
   const res = await renderMediaOnWeb({
     composition: { component: EditVideo, durationInFrames: t.durationInFrames, fps: FPS, width: f.width, height: f.height, id: "edit", defaultProps: inputProps },
     inputProps,

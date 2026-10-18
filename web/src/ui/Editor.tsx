@@ -258,6 +258,7 @@ function StatusBar() {
           <span className="spinner sm" />
           {tasks[0].label}
           {tasks[0].progress !== null && <span className="task-bar"><i style={{ width: `${tasks[0].progress * 100}%` }} /></span>}
+          {tasks.length > 1 && <span className="fine">+{tasks.length - 1} more</span>}
         </span>
       ) : project.status === "error" ? (
         <span className="status-error">

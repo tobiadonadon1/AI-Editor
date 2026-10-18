@@ -42,7 +42,7 @@ export interface Health {
   elevenlabs: boolean;
   auth: boolean;
   storage: boolean;
-  animations?: "api" | "mock"; // the configured animation service, or the built-in test mock
+  animations?: "api" | "code" | "mock"; // an animation service, Claude writing animations as code, or the built-in test mock
   unreachable?: boolean; // the health check itself failed
 }
 
@@ -62,6 +62,8 @@ export const api = {
     }),
   createAnimation: (body: { prompt: string; durationSec: number; width: number; height: number; fps: number; fit: string; format: string; style?: Record<string, unknown>; context?: string; projectId: string; layerId: string }) =>
     call<{ job: { id: string; provider: string }; status: string; error?: string }>("/api/animations", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), timeoutMs: 40000 }),
+  animationCode: (body: { action: "write" | "fix" | "review"; prompt: string; durationSec: number; width: number; height: number; fps: number; fit: string; format: string; style?: Record<string, unknown>; context?: string; code?: string; error?: string; frames?: string[] }) =>
+    call<{ code: string | null; approved?: boolean }>("/api/animations", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), timeoutMs: 290_000 }),
   pollAnimation: (job: { id: string; provider: string }, projectId: string, assetId: string) =>
     call<{ status: "queued" | "processing" | "ready" | "failed"; url?: string; path?: string; error?: string }>(
       `/api/animations?${new URLSearchParams({ id: job.id, provider: job.provider, project: projectId, asset: assetId })}`,

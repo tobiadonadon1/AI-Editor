@@ -97,7 +97,7 @@ export function Home() {
         <div className="home-status">
           <span className={health?.anthropic ? "ok" : "off"}>● AI assistant {health ? (health.anthropic ? "on" : "off") : "…"}</span>
           <span className={health?.elevenlabs ? "ok" : "off"}>● Transcription {health ? (health.elevenlabs ? "on" : "off") : "…"}</span>
-          <span className={health?.animations === "api" ? "ok" : "off"}>● Animation API {health ? (health.animations === "api" ? "connected" : "test mode") : "…"}</span>
+          <span className={health?.animations === "api" || health?.animations === "code" ? "ok" : "off"}>● Animations {health ? (health.animations === "api" ? "service connected" : health.animations === "code" ? "by Claude (code)" : "test mode") : "…"}</span>
         </div>
       </aside>
       <main className="home-main">

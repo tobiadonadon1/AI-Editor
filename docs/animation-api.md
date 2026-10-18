@@ -2,7 +2,11 @@
 
 Animation layers (track V5) start as **placeholders**: a box on the timeline with a description of what the animation should show. The AI adds them during the first cut when "Generate animations with the animation API" is ticked in setup, or when asked ("add an animation of the three steps here"). You can also add one from **Graphics → New Animation Placeholder**. Each placeholder is sent to an animation service, and the file it returns replaces the placeholder in the preview and the export. Empty placeholders show only in the editor; exports leave them out and say so.
 
-Until a service is connected, a built-in **mock** answers: it "renders" for about 4 seconds, then returns a sample transparent animation (`web/public/sample/animation.webm`). That makes the whole loop testable today.
+Where the animations come from, in order:
+
+1. **Your service**, when `ANIMATION_API_URL` is set (contract below).
+2. **Claude, writing each animation as code** (the default whenever the AI is configured). Claude writes one Remotion component for the placeholder (`api/_lib/motion.ts` holds the brief: transparent background, springs and staggered builds, a designed exit, no bullet lists). The editor runs it in a sandboxed iframe (`web/animator.html`: opaque origin, no storage, no network but fonts), renders three stills, sends them back to Claude for one art-director review, applies the polished version, and renders it to a transparent VP9 WebM that fills the layer. Errors in the code are sent back to Claude to fix (twice at most). The code is kept on the layer (`code`). It takes about 1 to 2 minutes per animation, mostly Claude writing; rendering takes seconds. Renders wait while the editor tab is in the background, because Chrome does not draw a sandboxed frame there.
+3. A built-in **mock** (`ANIMATION_PROVIDER=mock`, or no AI configured): it "renders" for about 4 seconds, then returns a sample transparent animation (`web/public/sample/animation.webm`).
 
 ## Connecting your service
 

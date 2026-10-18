@@ -77,5 +77,7 @@ export function claude(req?: Request): { client: Anthropic; model: string; direc
 }
 
 export const hasTranscription = () => Boolean(process.env.ELEVENLABS_API_KEY);
-// The animation service named by ANIMATION_API_URL, or the built-in mock used for testing.
-export const animationProvider = (): "api" | "mock" => (process.env.ANIMATION_API_URL ? "api" : "mock");
+// Where animations come from: the service named by ANIMATION_API_URL; otherwise Claude writes each one as
+// Remotion code that the editor renders itself; the built-in mock (ANIMATION_PROVIDER=mock, or no AI) for tests.
+export const animationProvider = (): "api" | "code" | "mock" =>
+  process.env.ANIMATION_API_URL ? "api" : process.env.ANIMATION_PROVIDER !== "mock" && claude() ? "code" : "mock";

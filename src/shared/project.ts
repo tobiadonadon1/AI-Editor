@@ -320,6 +320,7 @@ export interface AnimationItem extends ItemBase {
   assetId?: string; // the finished animation
   job?: { id: string; provider: string; startedAt: string; assetId: string }; // assetId: where the result will be kept
   error?: string;
+  code?: string; // the Remotion code it was rendered from, when the AI wrote it as code
   fit: "overlay" | "fullscreen";
   x: number; // centre, 0..100 of frame width (overlay)
   y: number;

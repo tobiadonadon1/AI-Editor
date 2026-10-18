@@ -1,5 +1,5 @@
 import { Component, lazy, Suspense, useEffect, useState, type ReactNode } from "react";
-import { ClerkDegraded, ClerkFailed, ClerkLoading, ClerkProvider, Show, SignIn, useAuth } from "@clerk/react";
+import { ClerkDegraded, ClerkFailed, ClerkLoading, ClerkProvider, Show, SignIn, SignUp, useAuth } from "@clerk/react";
 import { Home } from "./ui/Home";
 import { Mark } from "./ui/Icons";
 import { Splash } from "./ui/Splash";
@@ -102,6 +102,29 @@ const localization = {
   signUp: { start: { title: "Create your AI Editor account", subtitle: "Your projects and media are saved to it." } },
 };
 
+// Sign-in and sign-up live at /sign-in and /sign-up in this app (not on Clerk's hosted pages), and Clerk moves
+// between their steps with these, without reloading the page.
+const isAuthPath = (p: string) => /^\/sign-(in|up)(\/|$)/.test(p);
+// Where to go once signed in: the link the visitor opened (a project, say), or the project list.
+const returnTo = isAuthPath(location.pathname) ? "/#/" : `/${location.hash || "#/"}`;
+
+function navigate(to: string, replace = false) {
+  const url = new URL(to, location.href);
+  if (url.origin !== location.origin) return void location.assign(url.href);
+  history[replace ? "replaceState" : "pushState"](null, "", url.pathname + url.search + url.hash);
+  window.dispatchEvent(new PopStateEvent("popstate"));
+}
+
+function usePathname() {
+  const [path, setPath] = useState(location.pathname);
+  useEffect(() => {
+    const on = () => setPath(location.pathname);
+    window.addEventListener("popstate", on);
+    return () => window.removeEventListener("popstate", on);
+  }, []);
+  return path;
+}
+
 export function App() {
   if (!PUBLISHABLE_KEY)
     // Development without Clerk: one implicit user, synced to the cloud when the server has storage.
@@ -116,9 +139,13 @@ export function App() {
       publishableKey={PUBLISHABLE_KEY}
       appearance={appearance}
       localization={localization}
-      signInFallbackRedirectUrl="/#/"
-      signUpFallbackRedirectUrl="/#/"
-      afterSignOutUrl="/"
+      signInUrl="/sign-in"
+      signUpUrl="/sign-up"
+      signInFallbackRedirectUrl={returnTo}
+      signUpFallbackRedirectUrl={returnTo}
+      afterSignOutUrl="/sign-in"
+      routerPush={(to) => navigate(to)}
+      routerReplace={(to) => navigate(to, true)}
     >
       <ClerkLoading>
         <Splash label="Loading…" />
@@ -141,6 +168,10 @@ export function App() {
 
 function SignedInSession() {
   const { userId } = useAuth();
+  // Signed in while on a sign-in address (a reload, or the back button): show the app at its own address.
+  useEffect(() => {
+    if (isAuthPath(location.pathname)) navigate(`/${location.hash.startsWith("#/") ? location.hash : "#/"}`, true);
+  }, []);
   return (
     <Session userId={userId ?? null}>
       <Routes />
@@ -184,6 +215,10 @@ function Session({ userId, children }: { userId: string | null; children: ReactN
 }
 
 function SignInScreen() {
+  const path = usePathname();
+  useEffect(() => {
+    if (!isAuthPath(path)) navigate("/sign-in", true);
+  }, [path]);
   return (
     <div className="signin">
       <section className="signin-brand">
@@ -197,7 +232,11 @@ function SignInScreen() {
         </ul>
       </section>
       <section className="signin-form">
-        <SignIn routing="hash" />
+        {path.startsWith("/sign-up") ? (
+          <SignUp routing="path" path="/sign-up" signInUrl="/sign-in" fallbackRedirectUrl={returnTo} />
+        ) : isAuthPath(path) ? (
+          <SignIn routing="path" path="/sign-in" signUpUrl="/sign-up" fallbackRedirectUrl={returnTo} />
+        ) : null}
       </section>
     </div>
   );
